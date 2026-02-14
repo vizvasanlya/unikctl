@@ -29,6 +29,12 @@ cd D:\kernel\unikctl-rebrand
 .\scripts\publish-runtimes.ps1
 ```
 
+With retry hardening:
+
+```bash
+RETRIES=5 ./scripts/publish-runtimes.sh
+```
+
 3. Verify one image:
 
 ```bash
@@ -61,3 +67,9 @@ TAGS=latest,v0.1.11 ./scripts/publish-runtimes.sh
 
 If these images are missing, `unikctl build/deploy` can fail at runtime lookup/pull.
 
+## Production baseline recommendation
+
+1. Publish required runtimes before each public CLI release.
+2. Keep `latest` plus a version tag (for example `v0.1.12`).
+3. Run `unikctl doctor` on deployment hosts to verify runtime image availability.
+4. Treat runtime images as release artifacts and patch regularly.

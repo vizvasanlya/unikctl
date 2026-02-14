@@ -18,6 +18,7 @@ import (
 
 	"unikctl.sh/cmdfactory"
 	"unikctl.sh/config"
+	"unikctl.sh/internal/runtimeutil"
 	"unikctl.sh/internal/tableprinter"
 	"unikctl.sh/iostreams"
 )
@@ -50,6 +51,7 @@ func (opts *DoctorOptions) Run(ctx context.Context, _ []string) error {
 		checkKVM(),
 		checkNetwork(),
 		checkRuntimeTooling(),
+		checkRuntimeRegistry(ctx),
 		checkControlPlane(ctx),
 	}
 
@@ -151,6 +153,48 @@ func checkRuntimeTooling() checkResult {
 	return checkResult{Name: "runtime-tooling", Status: "PASS", Detail: strings.Join(found, ", ")}
 }
 
+func checkRuntimeRegistry(ctx context.Context) checkResult {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return checkResult{
+			Name:   "runtime-registry",
+			Status: "WARN",
+			Detail: "docker not found; cannot verify runtime images",
+		}
+	}
+
+	images := []string{
+		runtimeutil.DefaultRuntime,
+		runtimeutil.RuntimeRegistryPrefix + "/nodejs:latest",
+		runtimeutil.RuntimeRegistryPrefix + "/python:latest",
+		runtimeutil.RuntimeRegistryPrefix + "/java:latest",
+		runtimeutil.RuntimeRegistryPrefix + "/dotnet:latest",
+	}
+
+	missing := []string{}
+	for _, image := range images {
+		checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		cmd := exec.CommandContext(checkCtx, "docker", "buildx", "imagetools", "inspect", image)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			missing = append(missing, fmt.Sprintf("%s (%s)", image, firstLine(strings.TrimSpace(string(output)))))
+		}
+		cancel()
+	}
+
+	if len(missing) > 0 {
+		return checkResult{
+			Name:   "runtime-registry",
+			Status: "FAIL",
+			Detail: "missing/unreadable runtime images: " + strings.Join(missing, ", "),
+		}
+	}
+
+	return checkResult{
+		Name:   "runtime-registry",
+		Status: "PASS",
+		Detail: fmt.Sprintf("all required images available under %s", runtimeutil.RuntimeRegistryPrefix),
+	}
+}
+
 func checkControlPlane(ctx context.Context) checkResult {
 	endpoint := strings.TrimSpace(os.Getenv("UNIKCTL_CONTROL_PLANE_URL"))
 	if endpoint == "" {
@@ -191,4 +235,14 @@ func statusColor(status string) func(string) string {
 	default:
 		return nil
 	}
+}
+
+func firstLine(value string) string {
+	if value == "" {
+		return "inspect failed"
+	}
+	if idx := strings.IndexByte(value, '\n'); idx >= 0 {
+		return value[:idx]
+	}
+	return value
 }

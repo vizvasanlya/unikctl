@@ -28,6 +28,7 @@ $targetPrefix = if ($env:TARGET_PREFIX) { $env:TARGET_PREFIX } else { "ghcr.io/v
 $imagesCsv = if ($env:IMAGES) { $env:IMAGES } else { "base,nodejs,python,java,dotnet" }
 $tagsCsv = if ($env:TAGS) { $env:TAGS } else { "latest" }
 $dryRun = if ($env:DRY_RUN) { $env:DRY_RUN } else { "false" }
+$retries = if ($env:RETRIES) { [int]$env:RETRIES } else { 3 }
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
   throw "required command not found: docker"
@@ -43,6 +44,7 @@ Write-Host "  source: $sourcePrefix"
 Write-Host "  target: $targetPrefix"
 Write-Host "  images: $imagesCsv"
 Write-Host "  tags:   $tagsCsv"
+Write-Host "  retries:$retries"
 
 $images = $imagesCsv.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
 $tags = $tagsCsv.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
@@ -59,14 +61,30 @@ foreach ($image in $images) {
       continue
     }
 
-    docker buildx imagetools create --tag $dst $src
-    if ($LASTEXITCODE -ne 0) {
-      throw "failed publishing $src -> $dst"
+    $published = $false
+    for ($attempt = 1; $attempt -le $retries; $attempt++) {
+      docker buildx imagetools create --tag $dst $src
+      if ($LASTEXITCODE -eq 0) {
+        $published = $true
+        break
+      }
+      Start-Sleep -Seconds 2
+    }
+    if (-not $published) {
+      throw "failed publishing $src -> $dst after $retries attempts"
     }
 
-    docker buildx imagetools inspect $dst *> $null
-    if ($LASTEXITCODE -ne 0) {
-      throw "failed to verify $dst"
+    $verified = $false
+    for ($attempt = 1; $attempt -le $retries; $attempt++) {
+      docker buildx imagetools inspect $dst *> $null
+      if ($LASTEXITCODE -eq 0) {
+        $verified = $true
+        break
+      }
+      Start-Sleep -Seconds 2
+    }
+    if (-not $verified) {
+      throw "failed to verify $dst after $retries attempts"
     }
   }
 }

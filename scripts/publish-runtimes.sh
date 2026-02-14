@@ -22,6 +22,7 @@ TARGET_PREFIX="${TARGET_PREFIX:-ghcr.io/vizvasanlya/unikctl}"
 IMAGES_CSV="${IMAGES:-base,nodejs,python,java,dotnet}"
 TAGS_CSV="${TAGS:-latest}"
 DRY_RUN="${DRY_RUN:-false}"
+RETRIES="${RETRIES:-3}"
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -42,6 +43,7 @@ echo "  source: ${SOURCE_PREFIX}"
 echo "  target: ${TARGET_PREFIX}"
 echo "  images: ${IMAGES_CSV}"
 echo "  tags:   ${TAGS_CSV}"
+echo "  retries:${RETRIES}"
 
 IFS=',' read -r -a IMAGES_ARR <<<"${IMAGES_CSV}"
 IFS=',' read -r -a TAGS_ARR <<<"${TAGS_CSV}"
@@ -52,6 +54,22 @@ run() {
   else
     "$@"
   fi
+}
+
+with_retry() {
+  local attempt=1
+  local max_attempts="$1"
+  shift
+
+  until run "$@"; do
+    if [ "${attempt}" -ge "${max_attempts}" ]; then
+      echo "error: command failed after ${attempt} attempt(s): $*" >&2
+      return 1
+    fi
+    echo "retry ${attempt}/${max_attempts} failed; retrying in 2s: $*" >&2
+    attempt=$((attempt + 1))
+    sleep 2
+  done
 }
 
 for image in "${IMAGES_ARR[@]}"; do
@@ -65,8 +83,8 @@ for image in "${IMAGES_ARR[@]}"; do
     dst="${TARGET_PREFIX}/${image}:${tag}"
 
     echo "publishing ${src} -> ${dst}"
-    run docker buildx imagetools create --tag "${dst}" "${src}"
-    run docker buildx imagetools inspect "${dst}" >/dev/null
+    with_retry "${RETRIES}" docker buildx imagetools create --tag "${dst}" "${src}"
+    with_retry "${RETRIES}" docker buildx imagetools inspect "${dst}" >/dev/null
   done
 done
 
