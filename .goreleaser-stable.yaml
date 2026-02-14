@@ -42,9 +42,6 @@ changelog:
       order: 999
 
 release:
-  github:
-    owner: unikctl
-    name: unikctl
   draft: false
   prerelease: false
   mode: replace
@@ -55,20 +52,6 @@ release:
   name_template: 'v{{ .Version }}'
   extra_files:
     - glob: public.key
-
-signs:
-  - id: cosign
-    cmd: cosign
-    stdin: '{{ .Env.COSIGN_PASSWORD }}'
-    args:
-      - sign-blob
-      - "--key=cosign.key"
-      - "--output-signature=${signature}"
-      - "${artifact}"
-      - "--use-signing-config=false"
-      - "--bundle=${signature}.bundle"
-      - "--yes"
-    artifacts: all
 
 nfpms:
   - vendor: Unikraft
@@ -100,90 +83,6 @@ nfpms:
         dst: /usr/bin/kraftld
       - src: docs/man/
         dst: /usr/share/man/man1/
-
-aurs:
-  - homepage: https://unikctl.sh
-    ids:
-#@ for arch in binaries["unikctl"]["linux"]:
-      - #@ "archive-unikctl-linux-{}".format(arch)
-#@ end
-    description: Build and use highly customized and ultra-lightweight unikernels
-    maintainers:
-      - "Alexander Jung <alex at unikraft dot io>"
-    license: "BSD-3-Clause"
-    private_key: "{{ .Env.AUR_KEY }}"
-    git_url: "ssh://aur@aur.archlinux.org/unikctl-bin.git"
-    package: |-
-      # unikctl
-      install -Dm755 "${srcdir}/unikctl" "${pkgdir}/usr/bin/unikctl"
-      # kraftld
-      install -Dm755 "${srcdir}/kraftld" "${pkgdir}/usr/bin/kraftld"
-      # man pages
-      mkdir -p "${pkgdir}/usr/share/man/man1"
-      install -Dm644 ${srcdir}/man/* "${pkgdir}/usr/share/man/man1"
-    commit_author:
-      name: Unikraft Bot
-      email: monkey+aur@unikraft.io
-
-nix:
-  - name: unikctl
-    ids:
-#@ for arch in binaries["unikctl"]["linux"]:
-      - #@ "archive-unikctl-linux-{}".format(arch)
-#@ end
-#@ for arch in binaries["unikctl"]["darwin"]:
-      - #@ "archive-unikctl-darwin-{}".format(arch)
-#@ end
-    repository:
-      owner: unikraft
-      name: nur
-    homepage: https://unikctl.sh
-    description: Build and use highly customized and ultra-lightweight unikernels
-    path: pkgs/unikctl/default.nix
-    license: bsd3
-    install: |-
-      mkdir -p $out/bin
-      cp -vr "unikctl" "$out/bin/unikctl"
-      cp -vr "kraftld" "$out/bin/kraftld"
-      installManPage man/*
-
-brews:
-  - name: unikctl
-    ids:
-#@ for arch in binaries["unikctl"]["linux"]:
-      - #@ "archive-unikctl-linux-{}".format(arch)
-#@ end
-#@ for arch in binaries["unikctl"]["darwin"]:
-      - #@ "archive-unikctl-darwin-{}".format(arch)
-#@ end
-    url_template: "https://github.com/unikctl/unikctl/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
-    commit_author:
-      name: Unikraft Bot
-      email: monkey@unikraft.io
-    commit_msg_template: "Bump {{ .ProjectName }} to version {{ .Tag }}"
-    homepage: "https://unikctl.sh"
-    description: "Build and use highly customized and ultra-lightweight unikernels."
-    license: "BSD-3-Clause"
-    skip_upload: false
-    dependencies:
-      - name: gnu-sed
-      - name: make
-      - name: coreutils
-      - name: m4
-      - name: gawk
-      - name: grep
-      - name: wget
-      - name: qemu
-      - name: socat
-      - name: x86_64-elf-binutils
-      - name: x86_64-elf-gcc
-      - name: aarch64-elf-binutils
-      - name: aarch64-elf-gcc
-    repository:
-      owner: unikraft
-      name: homebrew-cli
-    extra_install: |-
-      man1.install Dir["man/*"]
 
 builds:
 #@ for bin, oses in binaries.items():

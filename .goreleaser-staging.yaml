@@ -42,9 +42,6 @@ changelog:
       order: 999
 
 release:
-  github:
-    owner: unikctl
-    name: unikctl
   draft: false
   prerelease: true
   mode: replace
@@ -84,44 +81,6 @@ nfpms:
         dst: /usr/bin/kraftld
       - src: docs/man/
         dst: /usr/share/man/man1/
-
-brews:
-  - name: unikctl-staging
-    ids:
-#@ for arch in binaries["unikctl"]["linux"]:
-      - #@ "archive-unikctl-linux-{}".format(arch)
-#@ end
-#@ for arch in binaries["unikctl"]["darwin"]:
-      - #@ "archive-unikctl-darwin-{}".format(arch)
-#@ end
-    url_template: "https://github.com/unikctl/unikctl/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
-    commit_author:
-      name: Unikraft Bot
-      email: monkey@unikraft.io
-    commit_msg_template: "Bump {{ .ProjectName }} to version {{ .Tag }}"
-    homepage: "https://unikctl.sh"
-    description: "Build and use highly customized and ultra-lightweight unikernels."
-    license: "BSD-3-Clause"
-    skip_upload: false
-    dependencies:
-      - name: gnu-sed
-      - name: make
-      - name: coreutils
-      - name: m4
-      - name: gawk
-      - name: grep
-      - name: wget
-      - name: qemu
-      - name: socat
-      - name: x86_64-elf-binutils
-      - name: x86_64-elf-gcc
-      - name: aarch64-elf-binutils
-      - name: aarch64-elf-gcc
-    repository:
-      owner: unikraft
-      name: homebrew-cli
-    extra_install: |-
-      man1.install Dir["man/*"]
 
 builds:
 #@ for bin, oses in binaries.items():
