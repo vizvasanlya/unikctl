@@ -58,9 +58,9 @@ func NewCmd() *cobra.Command {
        /^\     Build and deploy no-OS applications.
       :[ ]:
       | = |    Version:          %s
-     /|/=\|\   Documentation:    https://unikraft.org/docs/cli
-    (_:| |:_)  Issues & support: https://github.com/unikctl/unikctl/issues
-       v v     Platform:         https://unikraft.cloud
+     /|/=\|\   Documentation:    https://github.com/vizvasanlya/unikctl#readme
+    (_:| |:_)  Issues & support: https://github.com/vizvasanlya/unikctl/issues
+       v v     Platform:         https://github.com/vizvasanlya/unikctl
        ' '`, kitversion.Version()),
 		CompletionOptions: cobra.CompletionOptions{
 			HiddenDefaultCmd: true,
