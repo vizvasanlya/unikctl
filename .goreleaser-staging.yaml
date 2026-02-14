@@ -182,9 +182,6 @@ builds:
     tags:
       - netgo
       - osusergo
-      #@ if bin == "unikctl" and os == "linux" and arch == "amd64":
-      - xen
-      #@ end
 #@ end
 #@ end
 #@ end
