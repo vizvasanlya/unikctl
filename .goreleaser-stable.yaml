@@ -50,9 +50,6 @@ release:
 
     This is a stable release of unikctl.
   name_template: 'v{{ .Version }}'
-  extra_files:
-    - glob: public.key
-
 nfpms:
   - vendor: Unikraft
     id: nfpm-default
