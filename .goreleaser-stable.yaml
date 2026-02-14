@@ -239,7 +239,7 @@ builds:
       - -extldflags "-static"
       #@ end
       #@ if bin == "unikctl":
-      - -X {{ .Env.GOMOD }}/internal/cli/unikctl.sentryDsn={{ .Env.SENTRY_DSN }}
+      - -X unikctl.sh/internal/cli/unikctl.sentryDsn={{ index .Env "SENTRY_DSN" | default "" }}
       #@ end
     tags:
       - netgo
