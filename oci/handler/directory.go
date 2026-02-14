@@ -7,6 +7,7 @@ package handler
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -1387,26 +1388,26 @@ func (handle *DirectoryHandler) resolveImage(ctx context.Context, fullref string
 
 // UnpackImage implements ImageUnpacker.
 func (handle *DirectoryHandler) UnpackImage(ctx context.Context, fullref string, dgst digest.Digest, dest string) (*ocispec.Image, error) {
-	img, err := handle.resolveImage(ctx, fullref, dgst)
+	manifest, img, err := handle.ResolveManifest(ctx, fullref, dgst)
 	if err != nil {
-		return nil, fmt.Errorf("resolving config: %w", err)
+		return nil, fmt.Errorf("resolving manifest/config: %w", err)
 	}
 
 	// Iterate over the layers
-	for _, layer := range img.RootFS.DiffIDs {
-		// Get the digest
-		digest, err := v1.NewHash(layer.String())
-		if err != nil {
-			return nil, fmt.Errorf("generating digest: %w", err)
-		}
-
+	for _, layer := range manifest.Layers {
 		// Get the layer path
 		layerPath := filepath.Join(
 			handle.path,
 			DirectoryHandlerDigestsDir,
-			digest.Algorithm,
-			digest.Hex,
+			layer.Digest.Algorithm().String(),
+			layer.Digest.Encoded(),
 		)
+
+		if _, err := os.Stat(layerPath); err != nil {
+			if pullErr := handle.PullDigest(ctx, string(layer.MediaType), fullref, layer.Digest, nil, nil); pullErr != nil {
+				return nil, fmt.Errorf("pulling missing layer %s: %w", layer.Digest.String(), pullErr)
+			}
+		}
 
 		// Layer path is a tarball, so we need to extract it
 		reader, err := os.Open(layerPath)
@@ -1414,14 +1415,32 @@ func (handle *DirectoryHandler) UnpackImage(ctx context.Context, fullref string,
 			return nil, fmt.Errorf("opening layer: %w", err)
 		}
 
-		defer reader.Close()
+		var stream io.Reader = reader
+		var gzReader *gzip.Reader
 
-		tr := tar.NewReader(reader)
+		switch layer.MediaType {
+		case ocispec.MediaTypeImageLayerGzip, string(types.DockerLayer):
+			gzReader, err = gzip.NewReader(reader)
+			if err != nil {
+				_ = reader.Close()
+				return nil, fmt.Errorf("opening gzip layer %s: %w", layer.Digest.String(), err)
+			}
+			stream = gzReader
+		}
+
+		tr := tar.NewReader(stream)
 
 		for {
 			hdr, err := tr.Next()
 			if err != nil {
-				break
+				if err == io.EOF {
+					break
+				}
+				if gzReader != nil {
+					_ = gzReader.Close()
+				}
+				_ = reader.Close()
+				return nil, fmt.Errorf("reading layer tar stream: %w", err)
 			}
 
 			// Write the file to the destination
@@ -1430,6 +1449,10 @@ func (handle *DirectoryHandler) UnpackImage(ctx context.Context, fullref string,
 			// If the file is a directory, create it
 			if hdr.Typeflag == tar.TypeDir {
 				if err := os.MkdirAll(path, 0o775); err != nil {
+					if gzReader != nil {
+						_ = gzReader.Close()
+					}
+					_ = reader.Close()
 					return nil, fmt.Errorf("creating directory: %w", err)
 				}
 				continue
@@ -1438,6 +1461,10 @@ func (handle *DirectoryHandler) UnpackImage(ctx context.Context, fullref string,
 			// If the directory in the path doesn't exist, create it
 			if _, err := os.Stat(filepath.Dir(path)); os.IsNotExist(err) {
 				if err := os.MkdirAll(filepath.Dir(path), 0o775); err != nil {
+					if gzReader != nil {
+						_ = gzReader.Close()
+					}
+					_ = reader.Close()
 					return nil, fmt.Errorf("creating directory: %w", err)
 				}
 			}
@@ -1445,20 +1472,48 @@ func (handle *DirectoryHandler) UnpackImage(ctx context.Context, fullref string,
 			// Otherwise, create the file
 			writer, err := os.Create(path)
 			if err != nil {
+				if gzReader != nil {
+					_ = gzReader.Close()
+				}
+				_ = reader.Close()
 				return nil, fmt.Errorf("creating file: %w", err)
 			}
 
-			defer writer.Close()
-
 			if _, err = io.Copy(writer, tr); err != nil {
 				if err2 := writer.Close(); err2 != nil {
+					if gzReader != nil {
+						_ = gzReader.Close()
+					}
+					_ = reader.Close()
 					return nil, fmt.Errorf("%w: could not close unpack blob: %w", err, err2)
 				}
 				if err2 := os.RemoveAll(path); err2 != nil {
+					if gzReader != nil {
+						_ = gzReader.Close()
+					}
+					_ = reader.Close()
 					return nil, fmt.Errorf("%w: could not remove unpack blob: %w", err, err2)
 				}
 				return nil, fmt.Errorf("writing file: %w", err)
 			}
+
+			if err := writer.Close(); err != nil {
+				if gzReader != nil {
+					_ = gzReader.Close()
+				}
+				_ = reader.Close()
+				return nil, fmt.Errorf("closing file: %w", err)
+			}
+		}
+
+		if gzReader != nil {
+			if err := gzReader.Close(); err != nil {
+				_ = reader.Close()
+				return nil, fmt.Errorf("closing gzip layer: %w", err)
+			}
+		}
+		if err := reader.Close(); err != nil {
+			return nil, fmt.Errorf("closing layer: %w", err)
 		}
 	}
 
