@@ -4,7 +4,7 @@ set -euo pipefail
 # Mirrors runtime images into your unikctl registry namespace.
 #
 # Defaults:
-#   SOURCE_PREFIX=ghcr.io/vizvasanlya/unikctl-runtime
+#   SOURCE_PREFIX=ghcr.io/vizvasanlya/unikctl
 #   TARGET_PREFIX=ghcr.io/vizvasanlya/unikctl
 #   IMAGES=base,nodejs,python,java,dotnet
 #   TAGS=latest
@@ -17,7 +17,7 @@ set -euo pipefail
 #   TAGS=latest,v0.1.11 ./scripts/publish-runtimes.sh
 #   SOURCE_PREFIX=registry.example.com/runtime TARGET_PREFIX=ghcr.io/me/unikctl ./scripts/publish-runtimes.sh
 
-SOURCE_PREFIX="${SOURCE_PREFIX:-ghcr.io/vizvasanlya/unikctl-runtime}"
+SOURCE_PREFIX="${SOURCE_PREFIX:-ghcr.io/vizvasanlya/unikctl}"
 TARGET_PREFIX="${TARGET_PREFIX:-ghcr.io/vizvasanlya/unikctl}"
 IMAGES_CSV="${IMAGES:-base,nodejs,python,java,dotnet}"
 TAGS_CSV="${TAGS:-latest}"

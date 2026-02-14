@@ -6,7 +6,7 @@ on:
       source_prefix:
         description: "Source runtime registry prefix"
         required: false
-        default: "ghcr.io/vizvasanlya/unikctl-runtime"
+        default: "ghcr.io/vizvasanlya/unikctl"
       target_prefix:
         description: "Target runtime registry prefix"
         required: false

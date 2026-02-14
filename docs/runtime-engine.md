@@ -15,7 +15,7 @@ After rebranding, runtime images are expected in:
 echo "$GHCR_PAT" | docker login ghcr.io -u vizvasanlya --password-stdin
 ```
 
-2. Mirror runtime images from upstream into your namespace:
+2. Publish runtime images in your namespace:
 
 ```bash
 cd /path/to/unikctl-rebrand
@@ -78,7 +78,7 @@ Workflow:
 How to use:
 1. Open `Actions` -> `publish-runtimes`.
 2. Click `Run workflow`.
-3. Keep defaults (`source_prefix=ghcr.io/vizvasanlya/unikctl-runtime`, `target_prefix=ghcr.io/vizvasanlya/unikctl`, `images=base,nodejs,python,java,dotnet`, `tags=latest`).
+3. Keep defaults (`source_prefix=ghcr.io/vizvasanlya/unikctl`, `target_prefix=ghcr.io/vizvasanlya/unikctl`, `images=base,nodejs,python,java,dotnet`, `tags=latest`).
 4. Use `required_images` if you want strict fail for additional runtimes.
 
 ## Optional: publish release tag too

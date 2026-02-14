@@ -7,7 +7,7 @@ Mirrors runtime images into your unikctl registry namespace.
 
 .DESCRIPTION
 Defaults:
-  SOURCE_PREFIX=ghcr.io/vizvasanlya/unikctl-runtime
+  SOURCE_PREFIX=ghcr.io/vizvasanlya/unikctl
   TARGET_PREFIX=ghcr.io/vizvasanlya/unikctl
   IMAGES=base,nodejs,python,java,dotnet
   TAGS=latest
@@ -23,7 +23,7 @@ Requires:
   $env:TAGS="latest,v0.1.11"; ./scripts/publish-runtimes.ps1
 #>
 
-$sourcePrefix = if ($env:SOURCE_PREFIX) { $env:SOURCE_PREFIX } else { "ghcr.io/vizvasanlya/unikctl-runtime" }
+$sourcePrefix = if ($env:SOURCE_PREFIX) { $env:SOURCE_PREFIX } else { "ghcr.io/vizvasanlya/unikctl" }
 $targetPrefix = if ($env:TARGET_PREFIX) { $env:TARGET_PREFIX } else { "ghcr.io/vizvasanlya/unikctl" }
 $imagesCsv = if ($env:IMAGES) { $env:IMAGES } else { "base,nodejs,python,java,dotnet" }
 $tagsCsv = if ($env:TAGS) { $env:TAGS } else { "latest" }
