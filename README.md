@@ -311,6 +311,7 @@ Build-pack metadata and cache:
 
 - Native pipeline writes `.unikctl/native/pack-metadata.json` with selected pack/runtime/command/mode.
 - Repeated builds reuse `.unikctl/cache` (`npm`, `pip`, `cargo`, `go`) to reduce rebuild time.
+- Runtime image backbone setup is documented in `docs/runtime-engine.md`.
 
 ## Benchmark harness
 
