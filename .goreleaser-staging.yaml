@@ -1,0 +1,226 @@
+version: 2
+#! .goreleaser.yaml
+#@ binaries = {
+#@   "unikctl": {
+#@     "darwin": ["amd64", "arm64"],
+#@     "freebsd": ["amd64", "arm64"],
+#@     "linux": ["amd64", "arm64"],
+#@     "windows": ["amd64", "arm64"],
+#@   },
+#@   "runu": {
+#@     "linux": ["amd64"],
+#@   },
+#@ }
+
+before:
+  hooks:
+    - make man
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^.*#[[:digit:]]+.*$'
+  groups:
+    - title: ⚠️ Breaking Changes
+      regexp: '^[[:xdigit:]]+: [[:lower:]]+(\(.*\))?!:.*$'
+      order: 1
+    - title: 🚀 New Features
+      regexp: '^[[:xdigit:]]+: feat(\(.*\))?:.*$'
+      order: 2
+    - title: 🐛 Bug Fixes
+      regexp: '^[[:xdigit:]]+: fix(\(.*\))?:.*$'
+      order: 3
+    - title: 📖 Docs
+      regexp: '^[[:xdigit:]]+: docs(\(.*\))?:.*$'
+      order: 4
+    - title: 🤖 Bumps
+      regexp: '^[[:xdigit:]]+: (gomod|build)\(deps\):.*$'
+      order: 5
+    - title: 🐒 Miscellaneous
+      order: 999
+
+release:
+  github:
+    owner: unikctl
+    name: unikctl
+  draft: false
+  prerelease: true
+  mode: replace
+  header: |
+    ## unikctl {{ .Tag }} ({{ .Date }})
+
+    This is the pre-release version of unikctl.
+  name_template: 'v{{ .Version }}'
+
+nfpms:
+  - vendor: Unikraft
+    id: nfpm-default
+    maintainer: Alexander Jung <alex@unikraft.io>
+    description: Build and use highly customized and ultra-lightweight unikernels.
+    license: BSD 3-clause
+    bindir: /usr/bin
+    homepage: https://unikctl.sh
+    formats:
+      - deb
+      - rpm
+      - apk
+    recommends:
+      - bison
+      - build-essential
+      - flex
+      - git
+      - libncurses-dev
+      - qemu-system
+      - socat
+      - unzip
+      - wget
+    suggests:
+      - gcc-x86-64-linux-gnu
+      - g++-x86-64-linux-gnu
+    contents:
+      - src: scripts/kraftld
+        dst: /usr/bin/kraftld
+      - src: docs/man/
+        dst: /usr/share/man/man1/
+
+brews:
+  - name: unikctl-staging
+    ids:
+#@ for arch in binaries["unikctl"]["linux"]:
+      - #@ "archive-unikctl-linux-{}".format(arch)
+#@ end
+#@ for arch in binaries["unikctl"]["darwin"]:
+      - #@ "archive-unikctl-darwin-{}".format(arch)
+#@ end
+    url_template: "https://github.com/unikctl/unikctl/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
+    commit_author:
+      name: Unikraft Bot
+      email: monkey@unikraft.io
+    commit_msg_template: "Bump {{ .ProjectName }} to version {{ .Tag }}"
+    homepage: "https://unikctl.sh"
+    description: "Build and use highly customized and ultra-lightweight unikernels."
+    license: "BSD-3-Clause"
+    skip_upload: false
+    dependencies:
+      - name: gnu-sed
+      - name: make
+      - name: coreutils
+      - name: m4
+      - name: gawk
+      - name: grep
+      - name: wget
+      - name: qemu
+      - name: socat
+      - name: x86_64-elf-binutils
+      - name: x86_64-elf-gcc
+      - name: aarch64-elf-binutils
+      - name: aarch64-elf-gcc
+    repository:
+      owner: unikraft
+      name: homebrew-cli
+    extra_install: |-
+      man1.install Dir["man/*"]
+
+builds:
+#@ for bin, oses in binaries.items():
+#@ for os, archs in oses.items():
+#@ for arch in archs:
+  - id: #@ "{}-{}-{}".format(bin, os, arch)
+    binary: #@ bin
+    main: #@ "./cmd/{}".format(bin)
+    env:
+      - GOMOD=unikctl.sh
+    #@ if bin == "unikctl" and not(os == "linux" and arch == "amd64"):
+      - CGO_ENABLED=0
+    #@ end
+    goos:
+      - #@ os
+    goarch:
+      - #@ arch
+    ldflags:
+      - -s -w
+      - -X {{ .Env.GOMOD }}/internal/version.version={{ .Version }}
+      - -X {{ .Env.GOMOD }}/internal/version.commit={{ .Commit }}
+      - -X {{ .Env.GOMOD }}/internal/version.buildTime={{ .Date }}
+      #@ if bin == "unikctl" and os == "linux" and arch == "amd64":
+      - -extldflags "
+        -static
+        -lyajl
+        -Wl,--whole-archive
+        -llzma
+        -lbz2
+        -lzstd
+        -llzo2
+        -lxenguest
+        -Wl,--no-whole-archive
+        -lxenevtchn
+        -lxenlight
+        -lxenstore
+        -lxenctrl
+        -lxenforeignmemory
+        -lxenforeignmemory
+        -lxencall
+        -lxentoolcore
+        -lxenhypfs
+        -lxendevicemodel
+        -lxengnttab
+        -lxentoollog
+        -lz
+        -lnl-route-3
+        -lnl-3
+        -luuid
+        -lutil
+        "
+      #@ elif os != "windows":
+      - -extldflags "-static"
+      #@ end
+      #@ if bin == "unikctl":
+      - -X {{ .Env.GOMOD }}/internal/cli/unikctl.sentryDsn={{ .Env.SENTRY_DSN }}
+      #@ end
+    tags:
+      - netgo
+      - osusergo
+      #@ if bin == "unikctl" and os == "linux" and arch == "amd64":
+      - xen
+      #@ end
+#@ end
+#@ end
+#@ end
+
+archives:
+#@ for os, archs in binaries["unikctl"].items():
+#@ for arch in archs:
+  - id: #@ "archive-unikctl-{}-{}".format(os, arch)
+    #@ if os == "windows":
+    formats: zip
+    #@ else:
+    formats: tar.gz
+    #@ end
+    name_template: unikctl_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    builds:
+      - #@ "unikctl-{}-{}".format(os, arch)
+    #@ if os != "windows":
+    files:
+      - src: scripts/kraftld
+        strip_parent: true
+        info:
+          mode: 0755
+      - src: "docs/man/*.1.gz"
+        dst: man
+        info:
+          mode: 0644
+    #@ end
+#@ end
+#@ end
+
+#@ for os, archs in binaries["runu"].items():
+#@ for arch in archs:
+  - id: #@ "archive-runu-{}-{}".format(os, arch)
+    formats: tar.gz
+    name_template: runu_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    builds:
+      - #@ "runu-{}-{}".format(os, arch)
+#@ end
+#@ end

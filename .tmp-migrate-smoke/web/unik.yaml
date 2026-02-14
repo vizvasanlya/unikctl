@@ -1,0 +1,7 @@
+version: v1
+language: node
+runtime: unikraft.org/nodejs:latest
+run:
+    command:
+        - node
+        - server.js

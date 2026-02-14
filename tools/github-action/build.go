@@ -1,0 +1,92 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2022, Unikraft GmbH and The KraftKit Authors.
+// Licensed under the BSD-3-Clause License (the "License").
+// You may not use this file except in compliance with the License.
+package main
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+
+	"github.com/sirupsen/logrus"
+
+	"unikctl.sh/exec"
+	"unikctl.sh/initrd"
+	"unikctl.sh/iostreams"
+	"unikctl.sh/log"
+	"unikctl.sh/make"
+	"unikctl.sh/unikraft"
+	"unikctl.sh/unikraft/app"
+)
+
+func (opts *GithubAction) build(ctx context.Context) error {
+	if opts.Rootfs == "" {
+		opts.Rootfs = opts.project.Rootfs()
+	}
+
+	if opts.Rootfs != "" {
+		ramfs, err := initrd.New(ctx, opts.Rootfs,
+			initrd.WithWorkdir(opts.Workdir),
+			initrd.WithOutput(filepath.Join(
+				opts.Workdir,
+				unikraft.BuildDir,
+				fmt.Sprintf(initrd.DefaultInitramfsArchFileName, opts.target.Architecture().String(), opts.RootfsType),
+			)),
+			initrd.WithCacheDir(filepath.Join(
+				opts.Workdir,
+				unikraft.BuildDir,
+				"rootfs-cache",
+			)),
+			initrd.WithArchitecture(opts.target.Architecture().String()),
+			initrd.WithOutputType(initrd.FsType(opts.RootfsType)),
+		)
+		if err != nil {
+			return fmt.Errorf("could not prepare initramfs: %w", err)
+		}
+
+		opts.initrdPath, err = ramfs.Build(ctx)
+		if err != nil {
+			return err
+		}
+
+		// Unset the intird path since this is now embedded in the unikernel
+		if opts.project.KConfig().AnyYes(
+			"CONFIG_LIBVFSCORE_FSTAB", // Deprecated
+			"CONFIG_LIBVFSCORE_AUTOMOUNT_EINITRD",
+			"CONFIG_LIBVFSCORE_AUTOMOUNT_CI_EINITRD",
+		) {
+			opts.initrdPath = ""
+		}
+	}
+
+	if opts.project.Unikraft(ctx) == nil {
+		return nil
+	}
+
+	if err := opts.project.Configure(
+		ctx,
+		opts.target, // Target-specific options
+		nil,         // No extra configuration options
+		make.WithSilent(true),
+		make.WithExecOptions(
+			exec.WithStdin(iostreams.G(ctx).In),
+			exec.WithStdout(log.G(ctx).Writer()),
+			exec.WithStderr(log.G(ctx).WriterLevel(logrus.WarnLevel)),
+		),
+	); err != nil {
+		return fmt.Errorf("could not configure project: %w", err)
+	}
+
+	return opts.project.Build(
+		ctx,
+		opts.target, // Target-specific options
+		app.WithBuildMakeOptions(
+			make.WithMaxJobs(true),
+			make.WithExecOptions(
+				exec.WithStdout(log.G(ctx).Writer()),
+				exec.WithStderr(log.G(ctx).WriterLevel(logrus.WarnLevel)),
+			),
+		),
+	)
+}

@@ -1,0 +1,47 @@
+name: release/staging
+
+on:
+  push:
+    branches: [staging]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    container: unikctl.sh/myself-full:latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Fetch all tags
+        run: |
+          git config --global --add safe.directory /__w/kraftkit/kraftkit
+          git fetch --force --tags
+
+      - name: Generate GoReleaser configuration
+        run: |
+          ytt -f .goreleaser-staging.yaml > goreleaser-staging.yaml
+
+      - name: Run GoReleaser
+        run: |
+          git tag -d "$(git describe)" || true
+          git config user.name "Unikraft Bot"
+          git config user.email "monkey@unikraft.io"
+          git tag -a "$(git describe)" -m "Pre-release: $(git describe)"
+          echo "$GOOGLE_APPLICATION_JSON" > /tmp/gs.json
+          goreleaser build \
+            --config goreleaser-staging.yaml \
+            --skip=validate
+          goreleaser release \
+            --config goreleaser-staging.yaml \
+            --clean \
+            --skip=validate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}

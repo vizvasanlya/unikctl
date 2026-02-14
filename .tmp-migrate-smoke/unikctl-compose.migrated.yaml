@@ -1,0 +1,15 @@
+version: v1
+source: D:\kernel\unikctl-rebrand\.tmp-migrate-smoke\docker-compose.yml
+generated_at: "2026-02-14T07:30:55Z"
+services:
+    - name: web
+      source_path: D:\kernel\unikctl-rebrand\.tmp-migrate-smoke\web
+      generated_unik_yaml: D:\kernel\unikctl-rebrand\.tmp-migrate-smoke\web\unik.web.yaml
+      deploy_command: unikctl deploy D:\kernel\unikctl-rebrand\.tmp-migrate-smoke\web --name web
+      run_command:
+        - node
+        - server.js
+      ports:
+        - 8080:8080
+      environment:
+        NODE_ENV: production

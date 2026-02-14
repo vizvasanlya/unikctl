@@ -1,0 +1,36 @@
+# Ignore distributables folder
+dist/
+goreleaser-*.yaml
+
+# Ignore vscode folder
+.vscode/
+!.vscode/settings.json
+
+# Ignore idea (GoLand) folder
+.idea/
+
+# Ignore tool binaries
+tools/go-generate-qemu-devices/go-generate-qemu-devices
+tools/protoc-gen-go-netconn/protoc-gen-go-netconn
+
+# Ignore swap files
+*.swp
+*.swo
+*~
+.*~
+
+# Go workspace
+go.work
+go.work.sum
+
+
+@"
+# local binaries
+*.exe
+dist/
+tmp/
+*.generated.yaml
+
+# local runtime
+.unikctl/
+"@ | Add-Content .gitignore

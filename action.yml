@@ -1,0 +1,277 @@
+name: Build unikernel images with Unikraft
+description: Build, push and run unikernel images with Unikraft.
+author: Unikraft
+
+branding:
+  icon: package
+  color: blue
+
+inputs:
+  #
+  # Global flags
+  #
+  after:
+    description: Bash script to run after the action
+    required: false
+    default: ""
+  run:
+    description: Run the following script instead of the default command sequence
+    required: false
+  auths:
+    description: Authentication details for services, must be in YAML format
+    required: false
+  before:
+    description: Bash script to run before the action
+    required: false
+    default: ""
+  loglevel:
+    description: Log-level of the action
+    required: false
+    default: error
+  privileged:
+    description: Run unikctl in a privileged container
+    required: false
+    default: "false"
+  runtimedir:
+    description: Path to store runtime artifacts
+    required: false
+    default: /github/workspace/.kraftkit/runtime
+  grouprwx:
+    description: Set group read/write/execute permissions on all files
+    required: false
+    default: "true"
+  manifests:
+    description: List of Unikraft source manifests
+    required: false
+  buildkit:
+    description: Setup BuildKit before running the action
+    required: false
+    default: "true"
+
+  #
+  # Project flags
+  #
+  kraftfile:
+    description: Alternative path for the Kraftfile or inline-Kraftfile.
+    required: false
+  workdir:
+    description: Path to the project directory.
+    required: false
+
+  #
+  # Build flags
+  #
+  arch:
+    description: Architecture to build for.
+    required: false
+  build:
+    description: Toggle building the unikernel.
+    required: false
+    default: "true"
+  git_clone_depth:
+    description: Depth of the git clone.
+    required: false
+    default: "-1"
+  force_git:
+    description: Use git protocol for fetching sources.
+    required: false
+  plat:
+    description: Platform to build for.
+    required: false
+  target:
+    description: Name of the target to build for.
+    required: false
+
+  #
+  # Running flags
+  #
+  execute:
+    description: If to run the unikernel.
+    required: false
+    default: "false"
+  memory:
+    description: Set the memory size. String of format "1M"/"1G"/"1K"
+    required: false
+  timeout:
+    description: Timeout for the unikernel.
+    required: false
+
+  #
+  # Packaging flags
+  #
+  args:
+    description: Arguments to pass to the unikernel.
+    required: false
+  name:
+    description: Set the name of the output.
+    required: true
+  output:
+    description: Set the output path.
+    required: false
+  push:
+    description: Push the output to a registry.
+    required: false
+    default: "false"
+  rootfs:
+    description: Set the root filesystem.  This can be an existing CPIO archive or a directory.
+    required: false
+  rootfs-type:
+    description: Type of rootfs to build (cpio/erofs)
+    required: false
+    default: cpio
+  strategy:
+    description: Merge strategy to use when packaging.
+    required: false
+    default: merge
+  dbg:
+    description: Use the debug kernel.
+    required: false
+    default: "false"
+
+runs:
+  # Use a composite type so we can set up BuildKit beforehand so that
+  # `Dockerfile`s can be built as root filesystems.  Next, run KraftKit's GitHub
+  # Action program via Docker which has been built as a container image so that
+  # all the necessary dependencies for building, packaging and excuting the
+  # unikernel are available.  Attach all known environmental variables and the
+  # declared input variables to this action.  Finally, include the Docker
+  # authentication config which may have been used prior via the
+  # `docker/login-action` action, mount the buildkit socket, and mount
+  # additional paths which are specific to the action including the workspace.
+  using: composite
+  steps:
+  - name: Generate Suffix
+    shell: bash
+    id: suffix
+    run: echo "suffix=$(date +%s)" >> "$GITHUB_OUTPUT"
+  - name: Set up BuildKit
+    if: ${{ inputs.buildkit == 'true' }}
+    shell: bash
+    run: |
+      docker run \
+        --rm \
+        -itd \
+        --privileged \
+        --security-opt label=disable \
+        --name buildkitd_${GITHUB_RUN_ID}_${SUFFIX} \
+        -v /run/buildkit:/run/buildkit:rw \
+        moby/buildkit:v0.27.1;
+      timeout 60 bash -c 'while [ ! -S "/run/buildkit/buildkitd.sock" ]; do sleep 1; done'
+      sudo chmod 666 /run/buildkit/buildkitd.sock;
+    env:
+      SUFFIX: ${{ steps.suffix.outputs.suffix }}
+  - name: Set up scripts
+    shell: bash
+    run: |
+      mkdir -p "${GITHUB_WORKSPACE}/.kraftkit"
+
+      if [ "${{ inputs.grouprwx }}" = "true" ] && ([ "$(id -u)" != "1001" ] || [ "$(id -g)" != "127" ]); then
+        cat <<'EOF' > "${GITHUB_WORKSPACE}/.kraftkit/before.sh"
+      #!/usr/bin/env bash
+
+      sudo find /home/runner -exec chmod g+rwx {} +
+      sudo find /github/workspace -exec chmod g+rwx {} +
+      sudo chmod g+rwx . || true;
+      mkdir -p "${{ inputs.runtimedir }}";
+      sudo chmod g+rwx "${{ inputs.runtimedir }}" || true;
+      if [ -n "${{ inputs.workdir }}" ]; then
+          sudo chmod g+rwx "${{ inputs.workdir }}" || true;
+      fi
+      ${{ inputs.before }}
+      EOF
+      else
+        cat <<'EOF' > "${GITHUB_WORKSPACE}/.kraftkit/before.sh"
+      #!/usr/bin/env bash
+
+      ${{ inputs.before }}
+      EOF
+      fi
+      chmod +x "${GITHUB_WORKSPACE}/.kraftkit/before.sh"
+
+      # Always dump the contents of the inputs into relevant files, and simply
+      # remove if they do not contain any content.
+      touch "${GITHUB_WORKSPACE}/.kraftkit/run.sh"
+      cat <<'EOF' >> "${GITHUB_WORKSPACE}/.kraftkit/run.sh"
+      ${{ inputs.run }}
+      EOF
+      if [ "$(cat ${GITHUB_WORKSPACE}/.kraftkit/run.sh)" != "" ]; then
+        cat <<'EOF' > "${GITHUB_WORKSPACE}/.kraftkit/run.sh"
+      #!/usr/bin/env bash
+      ${{ inputs.run }}
+      EOF
+        chmod +x "${GITHUB_WORKSPACE}/.kraftkit/run.sh"
+      else
+        rm -f "${GITHUB_WORKSPACE}/.kraftkit/run.sh"
+      fi
+
+      touch "${GITHUB_WORKSPACE}/.kraftkit/after.sh"
+      cat <<'EOF' >> "${GITHUB_WORKSPACE}/.kraftkit/after.sh"
+      ${{ inputs.after }}
+      EOF
+      if [ "$(cat ${GITHUB_WORKSPACE}/.kraftkit/after.sh)" != "" ]; then
+        cat <<'EOF' > "${GITHUB_WORKSPACE}/.kraftkit/after.sh"
+      #!/usr/bin/env bash
+      ${{ inputs.after }}
+      EOF
+        chmod +x "${GITHUB_WORKSPACE}/.kraftkit/after.sh"
+      else
+        rm -f "${GITHUB_WORKSPACE}/.kraftkit/after.sh"
+      fi
+
+  - name: Run unikctl
+    shell: bash
+    run: |
+      ACTION_WORKSPACE=$(echo "${GITHUB_WORKSPACE}" | grep -Eo "^.*work")
+      docker run \
+        $([ "${{ inputs.privileged }}" = "true" ] && echo -n "--privileged") \
+        --workdir /github/workspace \
+        --rm \
+        --security-opt label=disable \
+        --env-file <(env) \
+        -e "CI=true" \
+        -e "GITHUB_WORKSPACE=/github/workspace" \
+        -e "INPUT_ARCH=${{ inputs.arch }}" \
+        -e "INPUT_ARGS=${{ inputs.args }}" \
+        -e "INPUT_AUTHS=${{ inputs.auths }}" \
+        -e "INPUT_BUILD=${{ inputs.build }}" \
+        -e "INPUT_GIT_CLONE_DEPTH=${{ inputs.git_clone_depth }}" \
+        -e "INPUT_EXECUTE=${{ inputs.execute }}" \
+        -e "INPUT_FORCE_GIT=${{ inputs.force_git }}" \
+        -e "INPUT_ROOTFS=${{ inputs.rootfs }}" \
+        -e "INPUT_ROOTFS_TYPE=${{ inputs.rootfs_type }}" \
+        -e "INPUT_KRAFTFILE=${{ inputs.kraftfile }}" \
+        -e "INPUT_LOGLEVEL=${{ inputs.loglevel }}" \
+        -e "INPUT_MEMORY=${{ inputs.memory }}" \
+        -e "INPUT_MANIFESTS=${{ inputs.manifests }}" \
+        -e "INPUT_NAME=${{ inputs.name }}" \
+        -e "INPUT_OUTPUT=${{ inputs.output }}" \
+        -e "INPUT_PLAT=${{ inputs.plat }}" \
+        -e "INPUT_STRATEGY=${{ inputs.strategy }}" \
+        -e "INPUT_DBG=${{ inputs.dbg }}" \
+        -e "INPUT_PUSH=${{ inputs.push }}" \
+        -e "INPUT_RUNTIMEDIR=${{ inputs.runtimedir }}" \
+        -e "INPUT_TARGET=${{ inputs.target }}" \
+        -e "INPUT_TIMEOUT=${{ inputs.timeout }}" \
+        -e "INPUT_WORKDIR=${{ inputs.workdir }}" \
+        -v "${HOME}/.docker":"/home/runner/.docker" \
+        -v "/run/buildkit/buildkitd.sock":"/run/buildkit/buildkitd.sock" \
+        -v "${ACTION_WORKSPACE}/_temp/_github_home":"/github/home" \
+        -v "${ACTION_WORKSPACE}/_temp/_github_workflow":"/github/workflow" \
+        -v "${ACTION_WORKSPACE}/_temp/_runner_file_commands":"/home/runner/work/_temp/_runner_file_commands" \
+        -v "${GITHUB_WORKSPACE}":"/github/workspace" \
+        unikctl.sh/github-action:v0
+
+  - name: Stop BuildKit
+    if: always()
+    shell: bash
+    run: docker stop buildkitd_${GITHUB_RUN_ID}_${SUFFIX} || true
+    env:
+      SUFFIX: ${{ steps.suffix.outputs.suffix }}
+
+  - name: Cleanup
+    if: always()
+    shell: bash
+    run: |
+      rm -f "${GITHUB_WORKSPACE}/.kraftkit/before.sh"
+      rm -f "${GITHUB_WORKSPACE}/.kraftkit/run.sh"
+      rm -f "${GITHUB_WORKSPACE}/.kraftkit/after.sh"

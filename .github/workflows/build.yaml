@@ -1,0 +1,70 @@
+name: build
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [staging]
+    paths:
+      - '**'
+      - '!.github/**'
+      - '.github/workflows/build.yaml'
+      - '!buildenvs/**'
+      - '!tools/**'
+      - '!README.md'
+
+# Automatically cancel in-progress actions on the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request_target' && github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unikctl:
+    container: unikctl.sh/myself-full:latest
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - GOOS: darwin
+          GOARCH: amd64
+          XEN: n
+        - GOOS: darwin
+          GOARCH: arm64
+          XEN: n
+        # FIXME(craciunoiuc): Enable FreeBSD builds when the build environment
+        # contains the freebsd toolchain.
+        # - GOOS: freebsd
+        #   GOARCH: amd64
+        # - GOOS: freebsd
+        #   GOARCH: arm64
+        - GOOS: linux
+          GOARCH: amd64
+          XEN: y
+        - GOOS: linux
+          GOARCH: arm64
+          XEN: n
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Fetch all tags
+        run: |
+          git config --global --add safe.directory /__w/kraftkit/kraftkit
+          git fetch --force --tags
+
+      - name: Build
+        run: |
+          VERSION=pr-${{ github.event.number }} XEN=${{ matrix.XEN }} GOOS=${{ matrix.GOOS }} GOARCH=${{ matrix.GOARCH }} make unikctl
+
+      - name: Upload build artifacts to GitHub
+        uses: actions/upload-artifact@v6
+        with:
+          name: kraft-${{ matrix.GOOS }}-${{ matrix.GOARCH }}-${{ github.event.pull_request.number}}
+          path: ./dist/unikctl
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true

@@ -1,0 +1,32 @@
+version: "2"
+run:
+  issues-exit-code: 2
+linters:
+  default: none
+  enable:
+    - misspell
+    - unparam
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - tmp/
+      - dist/
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gofumpt
+  exclusions:
+    generated: lax
+    paths:
+      - tmp/
+      - dist/
+      - third_party$
+      - builtin$
+      - examples$

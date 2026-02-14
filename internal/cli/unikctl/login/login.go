@@ -1,0 +1,117 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2022, Unikraft GmbH and The KraftKit Authors.
+// Licensed under the BSD-3-Clause License (the "License").
+// You may not use this file except in compliance with the License.
+package login
+
+import (
+	"bufio"
+	"context"
+	"encoding/base64"
+	"fmt"
+	"strings"
+
+	"github.com/MakeNowJust/heredoc"
+	"github.com/spf13/cobra"
+	"golang.org/x/term"
+
+	"unikctl.sh/cmdfactory"
+	"unikctl.sh/config"
+	"unikctl.sh/iostreams"
+)
+
+type LoginOptions struct {
+	User  string `long:"user" short:"u" usage:"Username" env:"KRAFTKIT_LOGIN_USER"`
+	Token string `long:"token" short:"t" usage:"Authentication token" env:"KRAFTKIT_LOGIN_TOKEN"`
+}
+
+func NewCmd() *cobra.Command {
+	cmd, err := cmdfactory.New(&LoginOptions{}, cobra.Command{
+		Short:   "Provide authorization details for a remote service",
+		Use:     "login [FLAGS] HOST",
+		Args:    cobra.ExactArgs(1),
+		Aliases: []string{"logon"},
+		Long: heredoc.Doc(`
+			Provide authorization details for a remote service.
+		`),
+		Example: heredoc.Doc(`
+			# Login to a remote service
+			$ unikctl login https://github.com
+		`),
+		Annotations: map[string]string{
+			cmdfactory.AnnotationHelpGroup: "misc",
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	return cmd
+}
+
+func (opts *LoginOptions) Run(ctx context.Context, args []string) error {
+	var err error
+	host := args[0]
+
+	// Prompt the user from stdin for a username if neither a username nor a token
+	// was provided
+	if opts.User == "" && opts.Token == "" {
+		fmt.Fprint(iostreams.G(ctx).Out, "Username (optional): ")
+
+		reader := bufio.NewReader(iostreams.G(ctx).In)
+		opts.User, err = reader.ReadString('\n')
+		if err != nil {
+			return err
+		}
+
+		opts.User = strings.TrimSpace(opts.User)
+	}
+
+	// Prompt the user from stdin for the token if it was not provided
+	if opts.Token == "" {
+		fmt.Print("Password: ")
+
+		btoken, err := term.ReadPassword(int(iostreams.G(ctx).In.Fd()))
+		if err != nil {
+			return fmt.Errorf("could not read password: %v", err)
+		}
+
+		fmt.Fprint(iostreams.G(ctx).Out, "\n")
+
+		opts.Token = string(btoken)
+	}
+
+	// If only a token was provided, check if it is a base64 encoded string
+	// containing both the username and token.
+	if opts.User == "" && opts.Token != "" {
+		// Check if the provided token is a base64 encoded string containing both the
+		// username and token
+		if decoded, err := base64.StdEncoding.DecodeString(opts.Token); err == nil && len(decoded) > 0 {
+			split := strings.SplitN(string(decoded), ":", 2)
+
+			if len(split) == 2 {
+				opts.User = split[0]
+				opts.Token = split[1]
+			}
+		}
+	}
+
+	authConfig := config.AuthConfig{
+		Token:     opts.Token,
+		Endpoint:  host,
+		VerifySSL: true,
+	}
+
+	if opts.User != "" {
+		authConfig.User = opts.User
+	} else if opts.Token != "" {
+		authConfig.Token = opts.Token
+	}
+
+	if config.G[config.KraftKit](ctx).Auth == nil {
+		config.G[config.KraftKit](ctx).Auth = make(map[string]config.AuthConfig)
+	}
+	config.G[config.KraftKit](ctx).Auth[host] = authConfig
+
+	return config.M[config.KraftKit](ctx).Write(true)
+}

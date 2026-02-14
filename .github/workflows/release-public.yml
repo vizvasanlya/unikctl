@@ -1,0 +1,40 @@
+name: release-public
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up ytt
+        run: go install carvel.dev/ytt/cmd/ytt@v0.51.0
+
+      - name: Render GoReleaser config
+        run: |
+          "$(go env GOPATH)/bin/ytt" -f .goreleaser-stable.yaml > goreleaser-stable.yaml
+
+      - name: Release
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean --config goreleaser-stable.yaml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

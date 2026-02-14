@@ -1,0 +1,171 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2024, Unikraft GmbH and The KraftKit Authors.
+// Licensed under the BSD-3-Clause License (the "License").
+// You may not use this file except in compliance with the License.
+
+package down
+
+import (
+	"context"
+	"os"
+
+	"github.com/MakeNowJust/heredoc"
+	composespec "github.com/compose-spec/compose-go/v2/cli"
+	"github.com/compose-spec/compose-go/v2/types"
+
+	"github.com/spf13/cobra"
+	"unikctl.sh/cmdfactory"
+	"unikctl.sh/compose"
+	"unikctl.sh/internal/cli/unikctl/compose/utils"
+	networkremove "unikctl.sh/internal/cli/unikctl/net/remove"
+	machineremove "unikctl.sh/internal/cli/unikctl/remove"
+	"unikctl.sh/log"
+	"unikctl.sh/packmanager"
+
+	machineapi "unikctl.sh/api/machine/v1alpha1"
+	networkapi "unikctl.sh/api/network/v1alpha1"
+	mnetwork "unikctl.sh/machine/network"
+	mplatform "unikctl.sh/machine/platform"
+)
+
+type DownOptions struct {
+	composefile   string
+	EnvFile       string `noattribute:"true"`
+	RemoveOrphans bool   `long:"remove-orphans" usage:"Remove machines for services not defined in the Compose file."`
+}
+
+func NewCmd() *cobra.Command {
+	cmd, err := cmdfactory.New(&DownOptions{}, cobra.Command{
+		Short:   "Stop and remove a compose project",
+		Use:     "down [FLAGS]",
+		Aliases: []string{"dw"},
+		Long:    "Stop and remove a compose project.",
+		Example: heredoc.Doc(`
+			# Stop and remove a compose project
+			$ unikctl compose down
+		`),
+		Annotations: map[string]string{
+			cmdfactory.AnnotationHelpGroup: "compose",
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	return cmd
+}
+
+func (opts *DownOptions) Pre(cmd *cobra.Command, _ []string) error {
+	ctx, err := packmanager.WithDefaultUmbrellaManagerInContext(cmd.Context())
+	if err != nil {
+		return err
+	}
+
+	cmd.SetContext(ctx)
+
+	if cmd.Flag("file").Changed {
+		opts.composefile = cmd.Flag("file").Value.String()
+	}
+
+	if cmd.Flag("env-file").Changed {
+		opts.EnvFile = cmd.Flag("env-file").Value.String()
+	}
+
+	log.G(cmd.Context()).WithField("composefile", opts.composefile).Debug("using")
+	return nil
+}
+
+func (opts *DownOptions) Run(ctx context.Context, args []string) error {
+	workdir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	var envFiles []string
+	if opts.EnvFile != "" {
+		envFiles = append(envFiles, opts.EnvFile)
+	}
+
+	project, err := compose.NewProjectFromComposeFile(ctx,
+		workdir,
+		opts.composefile,
+		composespec.WithEnvFiles(envFiles...),
+		composespec.WithDotEnv,
+	)
+	if err != nil {
+		return err
+	}
+
+	if err := project.Validate(ctx); err != nil {
+		return err
+	}
+
+	if opts.RemoveOrphans {
+		if err := utils.RemoveOrphans(ctx, project); err != nil {
+			return err
+		}
+	}
+
+	machineController, err := mplatform.NewMachineV1alpha1ServiceIterator(ctx)
+	if err != nil {
+		return err
+	}
+
+	machines, err := machineController.List(ctx, &machineapi.MachineList{})
+	if err != nil {
+		return err
+	}
+
+	orderedServices := project.ServicesReversedByDependencies(ctx, project.Services, false)
+	for _, service := range orderedServices {
+		for _, machine := range machines.Items {
+			if service.ContainerName == machine.Name {
+				if err := removeService(ctx, service); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	networkController, err := mnetwork.NewNetworkV1alpha1ServiceIterator(ctx)
+	if err != nil {
+		return err
+	}
+
+	networks, err := networkController.List(ctx, &networkapi.NetworkList{})
+	if err != nil {
+		return err
+	}
+
+	for _, projectNetwork := range project.Networks {
+		if projectNetwork.External {
+			continue
+		}
+		for _, network := range networks.Items {
+			if projectNetwork.Name == network.Name {
+				if err := removeNetwork(ctx, projectNetwork); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func removeService(ctx context.Context, service types.ServiceConfig) error {
+	log.G(ctx).Infof("removing service %s...", service.Name)
+	removeOptions := machineremove.RemoveOptions{Platform: "auto"}
+
+	return removeOptions.Run(ctx, []string{service.ContainerName})
+}
+
+func removeNetwork(ctx context.Context, network types.NetworkConfig) error {
+	log.G(ctx).Infof("removing network %s...", network.Name)
+	driver := "bridge"
+	if network.Driver != "" {
+		driver = network.Driver
+	}
+	removeOptions := networkremove.RemoveOptions{Driver: driver}
+
+	return removeOptions.Run(ctx, []string{network.Name})
+}

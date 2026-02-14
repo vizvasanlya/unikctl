@@ -1,0 +1,113 @@
+name: release/stable
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    container: unikctl.sh/myself-full:latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Fetch all tags
+        run: |
+          git config --global --add safe.directory /__w/kraftkit/kraftkit
+          git fetch --force --tags
+
+      - name: Install release tools
+        run: |
+          echo "deb [trusted=yes] https://apt.fury.io/cli/ * *" > /etc/apt/sources.list.d/fury-cli.list
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            fury-cli \
+            nix-bin \
+            openssh-client;
+          curl -O -L "https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64"
+          mv cosign-linux-amd64 /usr/local/bin/cosign
+          chmod +x /usr/local/bin/cosign
+
+      - name: Generate GoReleaser configuration
+        run: |
+          ytt -f .goreleaser-stable.yaml > goreleaser-stable.yaml
+
+      - name: Write cosign key and pubkey to file
+        run: |
+          echo "$COSIGN_KEY" > cosign.key
+          chmod 600 cosign.key
+          echo "$COSIGN_PASSWORD" | cosign public-key --key cosign.key > public.key
+        env:
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+
+      - name: Run GoReleaser
+        run: |
+          GORELEASER_PREVIOUS_TAG=$(curl -s "https://get.unikctl.sh/latest.txt")
+          export GORELEASER_PREVIOUS_TAG="v$GORELEASER_PREVIOUS_TAG"
+          export GORELEASER_CURRENT_TAG="${{  github.ref_name }}"
+          echo "$GOOGLE_APPLICATION_JSON" > /tmp/gs.json
+          goreleaser release \
+            --config goreleaser-stable.yaml \
+            --clean \
+            --skip=validate
+          fury push "$(ls ./dist/kraftkit_*_linux_amd64.deb)" --quiet --account "$FURY_USER" --api-token "$FURY_TOKEN"
+          fury push "$(ls ./dist/kraftkit_*_linux_arm64.deb)" --quiet --account "$FURY_USER" --api-token "$FURY_TOKEN"
+          fury push "$(ls ./dist/kraftkit_*_linux_amd64.rpm)" --quiet --account "$FURY_USER" --api-token "$FURY_TOKEN"
+          fury push "$(ls ./dist/kraftkit_*_linux_arm64.rpm)" --quiet --account "$FURY_USER" --api-token "$FURY_TOKEN"
+          # Enable this back when the archive format is no longer malformed
+          # fury push "$(ls ./dist/kraftkit_*_linux_amd64.apk)" --quiet --account "$FURY_USER" --api-token "$FURY_TOKEN"
+          # fury push "$(ls ./dist/kraftkit_*_linux_arm64.apk)" --quiet --account "$FURY_USER" --api-token "$FURY_TOKEN"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          FURY_TOKEN: ${{ secrets.FURY_TOKEN }}
+          FURY_USER: ${{ secrets.FURY_USER }}
+          AUR_KEY: ${{ secrets.AUR_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+
+      - name: Publish to APT repository
+        shell: bash
+        run: |
+          DISTROS=()
+          # Debian
+          DISTROS+=("bullseye")
+          DISTROS+=("bookworm")
+          DISTROS+=("trixie")
+          # Ubuntu
+          DISTROS+=("jammy")
+          DISTROS+=("lunar")
+          DISTROS+=("noble")
+          DISTROS+=("puffin")
+          DISTROS+=("quokka")
+
+          for DISTRO in "${DISTROS[@]}"; do
+            for DEB in dist/*.deb; do
+              curl "https://pkg.unikraft.com/debian/cli/upload/${DISTRO}/stable" \
+                --user "api:$PKG_TOKEN" \
+                --upload-file "${DEB}"
+            done
+          done
+
+          for RPM in dist/*.rpm; do
+            curl "https://pkg.unikraft.com/rpm/cli-rpm" \
+              --user "api:$PKG_TOKEN" \
+              --upload-file "${RPM}"
+          done
+
+          for APK in dist/*.apk; do
+            curl "https://pkg.unikraft.com/apk/cli-apk" \
+              --user "api:$PKG_TOKEN" \
+              --upload-file "${APK}"
+          done
+        env:
+          PKG_TOKEN: ${{ secrets.PKG_TOKEN }}

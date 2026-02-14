@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2022, Unikraft GmbH and The KraftKit Authors.
+// Licensed under the BSD-3-Clause License (the "License").
+// You may not use this file except in compliance with the License.
+package version
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/MakeNowJust/heredoc"
+	"github.com/spf13/cobra"
+
+	"unikctl.sh/cmdfactory"
+	"unikctl.sh/internal/version"
+	"unikctl.sh/iostreams"
+)
+
+type VersionOptions struct{}
+
+func NewCmd() *cobra.Command {
+	cmd, err := cmdfactory.New(&VersionOptions{}, cobra.Command{
+		Short:   "Show unikctl version information",
+		Use:     "version",
+		Aliases: []string{"v"},
+		Args:    cobra.NoArgs,
+		Long:    "Show unikctl version information.",
+		Example: heredoc.Doc(`
+			# Show unikctl version information
+			$ unikctl version
+		`),
+		Annotations: map[string]string{
+			cmdfactory.AnnotationHelpGroup: "misc",
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	return cmd
+}
+
+func (opts *VersionOptions) Run(ctx context.Context, _ []string) error {
+	fmt.Fprintf(iostreams.G(ctx).Out, "unikctl %s", version.String())
+	return nil
+}

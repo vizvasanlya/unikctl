@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2022, Unikraft GmbH and The KraftKit Authors.
+// Licensed under the BSD-3-Clause License (the "License").
+// You may not use this file except in compliance with the License.
+package run
+
+import (
+	"context"
+	"fmt"
+
+	machineapi "unikctl.sh/api/machine/v1alpha1"
+	"unikctl.sh/packmanager"
+)
+
+// runner is an interface for defining different mechanisms to execute the
+// provided unikernel.  Standardizing first the check, Runnable, to determine
+// whether the provided input is capable of executing, and Prepare, actually
+// performing the preparation of the Machine specification for the controller.
+type runner interface {
+	// String implements fmt.Stringer and returns the user-facing sentence
+	// representing the runner's context.
+	fmt.Stringer
+
+	// Name is a unique identifier for the runner.
+	Name() string
+
+	// Runnable checks whether the provided configuration is runnable.
+	Runnable(context.Context, *RunOptions, ...string) (bool, error)
+
+	// Prepare the provided configuration into a machine specification ready for
+	// execution by the controller.
+	Prepare(context.Context, *RunOptions, *machineapi.Machine, ...string) error
+}
+
+// runners is the list of built-in runners which are checked sequentially for
+// capability.  The first to test positive via Runnable is used with the
+// controller.
+func runners() ([]runner, error) {
+	r := []runner{
+		&runnerLinuxu{},
+		&runnerKernel{},
+		&runnerKraftfileUnikraft{},
+		&runnerKraftfileRuntime{},
+	}
+
+	umbrella, err := packmanager.PackageManagers()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, pm := range umbrella {
+		r = append(r, &runnerPackage{
+			pm: pm,
+		})
+	}
+
+	return r, nil
+}
+
+// runnersByName is a utility method that returns a map of the available runners
+// such that their alias name can be quickly looked up.
+func runnersByName() (map[string]runner, error) {
+	runners, err := runners()
+	if err != nil {
+		return nil, err
+	}
+	ret := make(map[string]runner, len(runners))
+	for _, runner := range runners {
+		ret[runner.Name()] = runner
+	}
+	return ret, nil
+}

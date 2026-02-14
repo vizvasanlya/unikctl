@@ -1,0 +1,89 @@
+name: tools/protoc-gen-go-netconn
+
+on:
+  push:
+    branches: [stable]
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [staging]
+    paths:
+      - 'tools/protoc-gen-go-netconn/**'
+      - '.github/workflows/gobuild-protoc.yaml'
+
+jobs:
+  # This job must run on the runner because hashFiles() operates on the runner
+  # by design, not inside the defined container (actions/runner#837).
+  go-vars:
+    runs-on: ubuntu-latest
+    outputs:
+      modhash: ${{ steps.gomod.outputs.hash }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.25.0
+          cache: false
+
+      - name: Set go.mod variable
+        id: goenv
+        run: |
+          cd tools/protoc-gen-go-netconn
+          echo "mod=$(go env GOMOD)" >>"$GITHUB_OUTPUT"
+
+      - name: Set go.mod hash variable
+        id: gomod
+        run: echo "hash=${{ hashFiles(steps.goenv.outputs.mod) }}" >>"$GITHUB_OUTPUT"
+
+  build-protoc:
+    runs-on: ubuntu-latest
+    needs: go-vars
+    container: unikctl.sh/myself-full:latest
+    env:
+      RUNGOGENERATE: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.25.0
+          cache: false
+
+      - name: Set Go variables
+        id: goenv
+        run: |
+          cd tools/protoc-gen-go-netconn
+          {
+            echo "cache=$(go env GOCACHE)"
+            echo "modcache=$(go env GOMODCACHE)"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Go caches
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ steps.goenv.outputs.cache }}
+            ${{ steps.goenv.outputs.modcache }}
+          key: ${{ github.job }}-${{ runner.os }}-go-${{ needs.go-vars.outputs.modhash }}
+          restore-keys: |
+            ${{ github.job }}-${{ runner.os }}-go-
+
+      - name: Go env
+        run: |
+          unset GOROOT
+          go env
+
+      - name: Build protoc-gen-go-netconn
+        run: |
+          set -x
+          git config --global --add safe.directory /__w/kraftkit/kraftkit
+          cd tools/protoc-gen-go-netconn
+          unset GOROOT
+          go build -o ../../dist/
+
+      - name: Run Help Message
+        run: |
+          set -x
+          ./dist/protoc-gen-go-netconn -h

@@ -1,0 +1,98 @@
+name: check/static
+
+on:
+  push:
+    branches: [stable]
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [staging]
+    paths:
+      - '**'
+      - '!.github/**'
+      - '.github/workflows/gochecks.yaml'
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    env:
+      RUNGOGENERATE: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.25.0
+          cache: false
+
+      - name: Set Go variables
+        id: goenv
+        run: |
+          {
+            echo "cache=$(go env GOCACHE)"
+            echo "modcache=$(go env GOMODCACHE)"
+            echo "mod=$(go env GOMOD)"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Go caches
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ steps.goenv.outputs.cache }}
+            ${{ steps.goenv.outputs.modcache }}
+          key: ${{ github.job }}-${{ runner.os }}-go-${{ hashFiles(steps.goenv.outputs.mod) }}
+          restore-keys: |
+            ${{ github.job }}-${{ runner.os }}-go-
+
+      - name: Check that go.mod is tidy
+        uses: protocol/multiple-go-modules@v1.4
+        with:
+          run: |
+            git config --global --add safe.directory '*'
+            go mod tidy
+            if [[ -n $(git ls-files --other --exclude-standard --directory -- go.sum) ]]; then
+              echo "go.sum was added by go mod tidy"
+              exit 1
+            fi
+            git diff --exit-code -- go.sum go.mod
+
+      - name: Format
+        if: success() || failure()  # run this step even if the previous one failed
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.4.0
+          args: |
+            --default none \
+            --timeout=30m \
+            --output.text.path \
+            --output.text.print-linter-name \
+            --output.text.print-issued-lines \
+            --output.text.colors
+          skip-cache: true
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.4.0
+          args: |
+            --timeout=30m \
+            --output.text.path \
+            --output.text.print-linter-name \
+            --output.text.print-issued-lines \
+            --output.text.colors
+          skip-cache: true
+
+      - name: go generate
+        uses: protocol/multiple-go-modules@v1.4
+        if: (success() || failure()) && env.RUNGOGENERATE == 'true'
+        with:
+          run: |
+            git clean -fd # make sure there aren't untracked files / directories
+            go generate ./...
+            # check if go generate modified or added any files
+            if ! $(git add . && git diff-index HEAD --exit-code --quiet); then
+              echo "go generate caused changes to the repository:"
+              git status --short
+              exit 1
+            fi

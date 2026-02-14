@@ -1,0 +1,107 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright (c) 2022, Unikraft GmbH and The KraftKit Authors.
+// Licensed under the BSD-3-Clause License (the "License").
+// You may not use this file except in compliance with the License.
+package source
+
+import (
+	"context"
+	"errors"
+
+	"github.com/MakeNowJust/heredoc"
+	"github.com/spf13/cobra"
+
+	"unikctl.sh/cmdfactory"
+	"unikctl.sh/config"
+	"unikctl.sh/log"
+	"unikctl.sh/packmanager"
+)
+
+type SourceOptions struct {
+	Force bool `short:"F" long:"force" usage:"Do not run a compatibility test before sourcing."`
+}
+
+// Source adds a remote location for discovering one-or-many Unikraft
+// components.
+func Source(ctx context.Context, opts *SourceOptions, args ...string) error {
+	if opts == nil {
+		opts = &SourceOptions{}
+	}
+
+	return opts.Run(ctx, args)
+}
+
+func NewCmd() *cobra.Command {
+	cmd, err := cmdfactory.New(&SourceOptions{}, cobra.Command{
+		Short:   "Add Unikraft component manifests",
+		Use:     "source [FLAGS] [SOURCE]",
+		Args:    cmdfactory.MinimumArgs(1, "must specify component or manifest"),
+		Aliases: []string{"src"},
+		Long: heredoc.Docf(`
+			Add a remote location for discovering one-or-many Unikraft components.
+		`),
+		Example: heredoc.Docf(`
+			# Add a single component as a Git repository
+			$ unikctl pkg source https://github.com/unikraft/unikraft.git
+
+			# Add a manifest of components
+			$ unikctl pkg source https://manifests.unikctl.sh/index.yaml
+
+			# Add a Unikraft-compatible OCI compatible registry
+			$ unikctl pkg source unikraft.org
+		`),
+		Annotations: map[string]string{
+			cmdfactory.AnnotationHelpGroup: "pkg",
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	return cmd
+}
+
+func (*SourceOptions) Pre(cmd *cobra.Command, _ []string) error {
+	ctx, err := packmanager.WithDefaultUmbrellaManagerInContext(cmd.Context())
+	if err != nil {
+		return err
+	}
+
+	cmd.SetContext(ctx)
+
+	return nil
+}
+
+func (opts *SourceOptions) Run(ctx context.Context, args []string) error {
+	for _, source := range args {
+		if !opts.Force {
+			_, compatible, err := packmanager.G(ctx).IsCompatible(ctx,
+				source,
+				packmanager.WithRemote(true),
+			)
+			if err != nil {
+				return err
+			} else if !compatible {
+				return errors.New("incompatible package manager")
+			}
+		}
+
+		for _, manifest := range config.G[config.KraftKit](ctx).Unikraft.Manifests {
+			if source == manifest {
+				log.G(ctx).Warnf("manifest already saved: %s", source)
+				return nil
+			}
+		}
+
+		config.G[config.KraftKit](ctx).Unikraft.Manifests = append(
+			config.G[config.KraftKit](ctx).Unikraft.Manifests,
+			source,
+		)
+
+		if err := config.M[config.KraftKit](ctx).Write(true); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
