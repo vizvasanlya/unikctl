@@ -32,7 +32,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := generateMarkdown(kraft.NewCmd(), outdir); err != nil {
+	if err := generateMarkdown(unikctl.NewCmd(), outdir); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
