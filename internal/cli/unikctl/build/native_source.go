@@ -4,6 +4,8 @@
 package build
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +18,8 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	toml "github.com/pelletier/go-toml/v2"
@@ -155,6 +159,11 @@ func runNativeSourcePipeline(ctx context.Context, opts *BuildOptions) (*nativePi
 		return nil, err
 	}
 
+	log.G(ctx).WithFields(map[string]interface{}{
+		"language_pack": pack.Name(),
+		"mode":          buildMode(opts),
+	}).Info("native source pipeline selected")
+
 	stageDir := filepath.Join(opts.Workdir, ".unikctl", "native")
 	rootfsDir := filepath.Join(stageDir, "rootfs")
 	kraftfilePath := filepath.Join(stageDir, "Kraftfile")
@@ -171,10 +180,16 @@ func runNativeSourcePipeline(ctx context.Context, opts *BuildOptions) (*nativePi
 		return nil, err
 	}
 
+	buildStarted := time.Now()
+	log.G(ctx).WithField("language_pack", pack.Name()).Info("starting native build step")
 	buildResult, err := pack.Build(ctx, opts, opts.Workdir, rootfsDir, cfg)
 	if err != nil {
 		return nil, err
 	}
+	log.G(ctx).WithFields(map[string]interface{}{
+		"language_pack": pack.Name(),
+		"elapsed":       time.Since(buildStarted).Round(time.Second).String(),
+	}).Info("native build step completed")
 
 	runtimeName := runtimeutil.Normalize(firstNonEmpty(cfg.Runtime, buildResult.Runtime, "unikraft.org/base:latest"), "latest")
 	if runtimeName == "" {
@@ -652,16 +667,132 @@ func runCommand(ctx context.Context, opts *BuildOptions, dir string, env map[str
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 
-	output, err := cmd.CombinedOutput()
-	if len(output) > 0 {
-		if werr := appendBuildLog(opts.SaveBuildLog, output); werr != nil {
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("creating stdout pipe for %s: %w", name, err)
+	}
+
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("creating stderr pipe for %s: %w", name, err)
+	}
+
+	commandLabel := strings.TrimSpace(strings.Join(append([]string{name}, args...), " "))
+	log.G(ctx).WithFields(map[string]interface{}{
+		"command": commandLabel,
+		"cwd":     dir,
+	}).Info("running")
+
+	var output bytes.Buffer
+	var outputMu sync.Mutex
+
+	lastOutput := atomic.Int64{}
+	lastOutput.Store(time.Now().UnixNano())
+	started := time.Now()
+
+	appendLine := func(line string) {
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			return
+		}
+
+		now := time.Now().UnixNano()
+		lastOutput.Store(now)
+
+		outputMu.Lock()
+		output.WriteString(line)
+		output.WriteByte('\n')
+		outputMu.Unlock()
+
+		log.G(ctx).Infof("  [%s] %s", filepath.Base(name), line)
+	}
+
+	streamPipe := func(reader io.ReadCloser) error {
+		defer reader.Close()
+
+		scanner := bufio.NewScanner(reader)
+		scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+		for scanner.Scan() {
+			appendLine(scanner.Text())
+		}
+
+		return scanner.Err()
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("starting command failed: %s: %w", commandLabel, err)
+	}
+
+	stopHeartbeat := make(chan struct{})
+	defer close(stopHeartbeat)
+
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				last := time.Unix(0, lastOutput.Load())
+				if time.Since(last) >= 15*time.Second {
+					log.G(ctx).WithFields(map[string]interface{}{
+						"command": commandLabel,
+						"elapsed": time.Since(started).Round(time.Second).String(),
+					}).Info("still running")
+				}
+			case <-stopHeartbeat:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	var streamErr error
+	var streamErrMu sync.Mutex
+	recordStreamErr := func(err error) {
+		if err == nil {
+			return
+		}
+		streamErrMu.Lock()
+		defer streamErrMu.Unlock()
+		if streamErr == nil {
+			streamErr = err
+		}
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		recordStreamErr(streamPipe(stdoutPipe))
+	}()
+	go func() {
+		defer wg.Done()
+		recordStreamErr(streamPipe(stderrPipe))
+	}()
+
+	waitErr := cmd.Wait()
+	wg.Wait()
+
+	outputBytes := output.Bytes()
+	if len(outputBytes) > 0 {
+		if werr := appendBuildLog(opts.SaveBuildLog, outputBytes); werr != nil {
 			return werr
 		}
 	}
 
-	if err != nil {
-		return fmt.Errorf("command failed: %s %s: %w\n%s", name, strings.Join(args, " "), err, string(output))
+	if streamErr != nil {
+		return fmt.Errorf("reading command output failed: %s: %w", commandLabel, streamErr)
 	}
+
+	if waitErr != nil {
+		return fmt.Errorf("command failed: %s: %w\n%s", commandLabel, waitErr, string(outputBytes))
+	}
+
+	log.G(ctx).WithFields(map[string]interface{}{
+		"command": commandLabel,
+		"elapsed": time.Since(started).Round(time.Second).String(),
+	}).Info("completed")
 
 	return nil
 }
