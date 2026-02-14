@@ -162,29 +162,49 @@ func checkRuntimeRegistry(ctx context.Context) checkResult {
 		}
 	}
 
-	images := []string{
+	requiredImages := []string{
 		runtimeutil.DefaultRuntime,
+	}
+	optionalImages := []string{
 		runtimeutil.RuntimeRegistryPrefix + "/nodejs:latest",
 		runtimeutil.RuntimeRegistryPrefix + "/python:latest",
 		runtimeutil.RuntimeRegistryPrefix + "/java:latest",
 		runtimeutil.RuntimeRegistryPrefix + "/dotnet:latest",
 	}
 
-	missing := []string{}
-	for _, image := range images {
+	missingRequired := []string{}
+	for _, image := range requiredImages {
 		checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		cmd := exec.CommandContext(checkCtx, "docker", "buildx", "imagetools", "inspect", image)
 		if output, err := cmd.CombinedOutput(); err != nil {
-			missing = append(missing, fmt.Sprintf("%s (%s)", image, firstLine(strings.TrimSpace(string(output)))))
+			missingRequired = append(missingRequired, fmt.Sprintf("%s (%s)", image, firstLine(strings.TrimSpace(string(output)))))
 		}
 		cancel()
 	}
 
-	if len(missing) > 0 {
+	if len(missingRequired) > 0 {
 		return checkResult{
 			Name:   "runtime-registry",
 			Status: "FAIL",
-			Detail: "missing/unreadable runtime images: " + strings.Join(missing, ", "),
+			Detail: "missing required runtime images: " + strings.Join(missingRequired, ", "),
+		}
+	}
+
+	missingOptional := []string{}
+	for _, image := range optionalImages {
+		checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		cmd := exec.CommandContext(checkCtx, "docker", "buildx", "imagetools", "inspect", image)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			missingOptional = append(missingOptional, fmt.Sprintf("%s (%s)", image, firstLine(strings.TrimSpace(string(output)))))
+		}
+		cancel()
+	}
+
+	if len(missingOptional) > 0 {
+		return checkResult{
+			Name:   "runtime-registry",
+			Status: "WARN",
+			Detail: "optional runtime images missing: " + strings.Join(missingOptional, ", "),
 		}
 	}
 

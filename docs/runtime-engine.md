@@ -35,6 +35,29 @@ With retry hardening:
 RETRIES=5 ./scripts/publish-runtimes.sh
 ```
 
+Required vs optional behavior:
+
+- `REQUIRED_IMAGES` controls which images must exist at source (default: `base`).
+- Missing optional images are skipped with warning.
+- Missing required images fail the publish.
+
+```bash
+REQUIRED_IMAGES=base,nodejs ./scripts/publish-runtimes.sh
+```
+
+Per-runtime explicit source override:
+
+```bash
+SOURCE_NODEJS=<registry>/<repo>/nodejs:latest ./scripts/publish-runtimes.sh
+```
+
+PowerShell:
+
+```powershell
+$env:SOURCE_NODEJS = "<registry>/<repo>/nodejs:latest"
+.\scripts\publish-runtimes.ps1
+```
+
 3. Verify one image:
 
 ```bash
@@ -56,6 +79,7 @@ How to use:
 1. Open `Actions` -> `publish-runtimes`.
 2. Click `Run workflow`.
 3. Keep defaults (`source_prefix=unikraft.org`, `target_prefix=ghcr.io/vizvasanlya/unikctl`, `images=base,nodejs,python,java,dotnet`, `tags=latest`).
+4. Use `required_images` if you want strict fail for additional runtimes.
 
 ## Optional: publish release tag too
 

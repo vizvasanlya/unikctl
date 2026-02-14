@@ -29,6 +29,7 @@ $imagesCsv = if ($env:IMAGES) { $env:IMAGES } else { "base,nodejs,python,java,do
 $tagsCsv = if ($env:TAGS) { $env:TAGS } else { "latest" }
 $dryRun = if ($env:DRY_RUN) { $env:DRY_RUN } else { "false" }
 $retries = if ($env:RETRIES) { [int]$env:RETRIES } else { 3 }
+$requiredImagesCsv = if ($env:REQUIRED_IMAGES) { $env:REQUIRED_IMAGES } else { "base" }
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
   throw "required command not found: docker"
@@ -45,15 +46,61 @@ Write-Host "  target: $targetPrefix"
 Write-Host "  images: $imagesCsv"
 Write-Host "  tags:   $tagsCsv"
 Write-Host "  retries:$retries"
+Write-Host "  required:$requiredImagesCsv"
 
 $images = $imagesCsv.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
 $tags = $tagsCsv.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+$requiredImages = $requiredImagesCsv.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+
+function Test-ImageRef {
+  param([string]$Ref)
+  docker buildx imagetools inspect $Ref *> $null
+  return ($LASTEXITCODE -eq 0)
+}
+
+function Resolve-SourceRef {
+  param(
+    [string]$SourcePrefix,
+    [string]$Image,
+    [string]$Tag
+  )
+
+  $envKey = "SOURCE_" + ($Image.ToUpper().Replace("-", "_"))
+  $custom = [Environment]::GetEnvironmentVariable($envKey)
+  $candidates = @()
+  if (-not [string]::IsNullOrWhiteSpace($custom)) {
+    $candidates += $custom.Trim()
+  }
+  $candidates += @(
+    "$SourcePrefix/$Image`:$Tag",
+    "index.unikraft.io/unikraft.org/$Image`:$Tag",
+    "index.unikraft.io/official/$Image`:$Tag"
+  )
+
+  foreach ($candidate in $candidates) {
+    if (Test-ImageRef -Ref $candidate) {
+      return $candidate
+    }
+  }
+
+  return $null
+}
 
 foreach ($image in $images) {
   foreach ($tag in $tags) {
     $src = "$sourcePrefix/$image`:$tag"
     $dst = "$targetPrefix/$image`:$tag"
 
+    $resolved = Resolve-SourceRef -SourcePrefix $sourcePrefix -Image $image -Tag $tag
+    if ([string]::IsNullOrWhiteSpace($resolved)) {
+      if ($requiredImages -contains $image) {
+        throw "required runtime source not found for $image`:$tag (set SOURCE_$($image.ToUpper().Replace('-', '_')) explicitly)"
+      }
+      Write-Warning "skipping optional runtime $image`:$tag (no source found)"
+      continue
+    }
+
+    $src = $resolved
     Write-Host "publishing $src -> $dst"
     if ($dryRun -eq "true") {
       Write-Host "[dry-run] docker buildx imagetools create --tag $dst $src"

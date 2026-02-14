@@ -15,6 +15,10 @@ on:
         description: "Comma-separated images"
         required: false
         default: "base,nodejs,python,java,dotnet"
+      required_images:
+        description: "Comma-separated required images (missing optional images are skipped)"
+        required: false
+        default: "base"
       tags:
         description: "Comma-separated tags"
         required: false
@@ -46,6 +50,7 @@ jobs:
           SOURCE_PREFIX: ${{ inputs.source_prefix }}
           TARGET_PREFIX: ${{ inputs.target_prefix }}
           IMAGES: ${{ inputs.images }}
+          REQUIRED_IMAGES: ${{ inputs.required_images }}
           TAGS: ${{ inputs.tags }}
         run: |
           chmod +x scripts/publish-runtimes.sh
