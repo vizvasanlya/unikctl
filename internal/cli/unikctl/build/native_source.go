@@ -168,6 +168,12 @@ func runNativeSourcePipeline(ctx context.Context, opts *BuildOptions) (*nativePi
 	rootfsDir := filepath.Join(stageDir, "rootfs")
 	kraftfilePath := filepath.Join(stageDir, "Kraftfile")
 
+	if cached, ok, err := tryReuseNativePipeline(ctx, opts.Workdir, stageDir, pack.Name(), buildMode(opts)); err != nil {
+		log.G(ctx).WithError(err).Debug("could not evaluate native pipeline cache, rebuilding")
+	} else if ok {
+		return cached, nil
+	}
+
 	if err := os.RemoveAll(stageDir); err != nil {
 		return nil, fmt.Errorf("clearing native build dir: %w", err)
 	}
@@ -828,7 +834,12 @@ func toolCacheEnv(opts *BuildOptions, tool string) map[string]string {
 		return map[string]string{}
 	}
 
-	cacheRoot := filepath.Join(opts.Workdir, ".unikctl", "cache")
+	workdir, err := filepath.Abs(opts.Workdir)
+	if err != nil {
+		return map[string]string{}
+	}
+
+	cacheRoot := filepath.Join(workdir, ".unikctl", "cache")
 	tool = strings.ToLower(strings.TrimSpace(tool))
 
 	switch tool {
@@ -1478,6 +1489,125 @@ func buildMode(opts *BuildOptions) string {
 	}
 
 	return "release"
+}
+
+func tryReuseNativePipeline(ctx context.Context, workdir, stageDir, packName, mode string) (*nativePipelineResult, bool, error) {
+	metadataPath := filepath.Join(stageDir, "pack-metadata.json")
+	kraftfilePath := filepath.Join(stageDir, "Kraftfile")
+
+	if !fileExists(metadataPath) || !fileExists(kraftfilePath) {
+		return nil, false, nil
+	}
+
+	raw, err := os.ReadFile(metadataPath)
+	if err != nil {
+		return nil, false, fmt.Errorf("reading cached metadata: %w", err)
+	}
+
+	metadata := nativePackMetadata{}
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		return nil, false, fmt.Errorf("parsing cached metadata: %w", err)
+	}
+
+	if strings.TrimSpace(metadata.LanguagePack) != strings.TrimSpace(packName) ||
+		strings.TrimSpace(metadata.BuildMode) != strings.TrimSpace(mode) {
+		return nil, false, nil
+	}
+
+	rootfsDir := strings.TrimSpace(metadata.RootfsDir)
+	if rootfsDir == "" {
+		rootfsDir = filepath.Join(stageDir, "rootfs")
+	}
+	if !filepath.IsAbs(rootfsDir) {
+		rootfsDir = filepath.Join(workdir, rootfsDir)
+	}
+	rootfsDir = filepath.Clean(rootfsDir)
+
+	rootfsInfo, err := os.Stat(rootfsDir)
+	if err != nil || !rootfsInfo.IsDir() {
+		return nil, false, nil
+	}
+
+	latestSourceMod, err := latestSourceModTime(workdir)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if !metadata.GeneratedAtUTC.IsZero() && latestSourceMod.After(metadata.GeneratedAtUTC) {
+		return nil, false, nil
+	}
+
+	if metadata.Runtime == "" {
+		metadata.Runtime = "unikraft.org/base:latest"
+	}
+	if len(metadata.Command) == 0 {
+		metadata.Command = []string{"/app/app"}
+	}
+
+	log.G(ctx).WithFields(map[string]interface{}{
+		"language_pack": metadata.LanguagePack,
+		"mode":          metadata.BuildMode,
+		"rootfs":        rootfsDir,
+	}).Info("reusing cached native source pipeline")
+
+	return &nativePipelineResult{
+		RootfsDir: rootfsDir,
+		Kraftfile: kraftfilePath,
+		Runtime:   metadata.Runtime,
+		Command:   metadata.Command,
+		Pack:      metadata.LanguagePack,
+	}, true, nil
+}
+
+func latestSourceModTime(workdir string) (time.Time, error) {
+	latest := time.Time{}
+
+	skipDirs := map[string]struct{}{
+		".git":         {},
+		".unikctl":     {},
+		".unikraft":    {},
+		"node_modules": {},
+		"target":       {},
+		"bin":          {},
+		"obj":          {},
+		".venv":        {},
+		"venv":         {},
+		"__pycache__":  {},
+		"dist":         {},
+		"build":        {},
+		"out":          {},
+	}
+
+	err := filepath.WalkDir(workdir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == workdir {
+			return nil
+		}
+
+		name := d.Name()
+		if d.IsDir() {
+			if _, ok := skipDirs[name]; ok {
+				return fs.SkipDir
+			}
+			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.ModTime().After(latest) {
+			latest = info.ModTime()
+		}
+		return nil
+	})
+	if err != nil {
+		return time.Time{}, fmt.Errorf("walking source tree: %w", err)
+	}
+
+	return latest.UTC(), nil
 }
 
 func firstNonEmpty(values ...string) string {

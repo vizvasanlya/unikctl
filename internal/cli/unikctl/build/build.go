@@ -85,6 +85,11 @@ func Build(ctx context.Context, opts *BuildOptions, args ...string) error {
 		}
 	}
 
+	opts.Workdir, err = filepath.Abs(opts.Workdir)
+	if err != nil {
+		return fmt.Errorf("resolving workdir: %w", err)
+	}
+
 	if opts.Project != nil && opts.Project.InitrdFsType().String() != "" && opts.RootfsType == "" {
 		opts.RootfsType = opts.Project.InitrdFsType()
 	}
