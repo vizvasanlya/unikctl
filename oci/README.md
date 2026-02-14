@@ -1,22 +1,22 @@
-# Unikraft OCI Images 
+# unikctl OCI Images 
 
-This package contains the implementation for handling both the packaging and distribution of Unikraft unikernels via the [Open Container Image (OCI)'s Image Specification](https://github.com/opencontainers/image-spec/blob/main/spec.md).
+This package contains the implementation for handling both the packaging and distribution of unikernel images via the [Open Container Image (OCI) Image Specification](https://github.com/opencontainers/image-spec/blob/main/spec.md).
 
 At a high-level, this is done in order to ease distribution of pre-built unikernel images using existing infrastructure.
-More precisely, the specification is adopted with several well-known annotations and practices to ensure consistency and compatibility with Unikraft unikernel images which are packed into an OCI image format.
+More precisely, the specification is adopted with several well-known annotations and practices to ensure consistency and compatibility with unikernel images packed into OCI format.
 
 ## Overview
 
 The OCI Image Specification allows for the declaration of artifacts in a hierarchical fashion.
 The top-most element is an index which contains a list of manifests.
-Each manifest in KraftKit's case is a pre-built unikernel image along with accompanying root filesystem.
+Each manifest is a pre-built unikernel image along with an accompanying root filesystem.
 
 ### Supported backends
 
-There are currently two supported backends for using and manipulating OCI images in KraftKit:
+There are currently two supported backends for using and manipulating OCI images:
 
 - `directory` (default) handles the representation of the OCI Image in directory format;
-- `containerd` which requires configuration in the [KraftKit config file](https://unikraft.org/docs/cli/options) and uses containerd's content storage system.
+- `containerd` which requires configuration in the unikctl config file and uses containerd's content storage system.
 
 ### General usage
 

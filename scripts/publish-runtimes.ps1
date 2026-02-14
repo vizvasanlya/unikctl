@@ -7,7 +7,7 @@ Mirrors runtime images into your unikctl registry namespace.
 
 .DESCRIPTION
 Defaults:
-  SOURCE_PREFIX=unikraft.org
+  SOURCE_PREFIX=ghcr.io/vizvasanlya/unikctl-runtime
   TARGET_PREFIX=ghcr.io/vizvasanlya/unikctl
   IMAGES=base,nodejs,python,java,dotnet
   TAGS=latest
@@ -23,7 +23,7 @@ Requires:
   $env:TAGS="latest,v0.1.11"; ./scripts/publish-runtimes.ps1
 #>
 
-$sourcePrefix = if ($env:SOURCE_PREFIX) { $env:SOURCE_PREFIX } else { "unikraft.org" }
+$sourcePrefix = if ($env:SOURCE_PREFIX) { $env:SOURCE_PREFIX } else { "ghcr.io/vizvasanlya/unikctl-runtime" }
 $targetPrefix = if ($env:TARGET_PREFIX) { $env:TARGET_PREFIX } else { "ghcr.io/vizvasanlya/unikctl" }
 $imagesCsv = if ($env:IMAGES) { $env:IMAGES } else { "base,nodejs,python,java,dotnet" }
 $tagsCsv = if ($env:TAGS) { $env:TAGS } else { "latest" }
@@ -72,9 +72,7 @@ function Resolve-SourceRef {
     $candidates += $custom.Trim()
   }
   $candidates += @(
-    "$SourcePrefix/$Image`:$Tag",
-    "index.unikraft.io/unikraft.org/$Image`:$Tag",
-    "index.unikraft.io/official/$Image`:$Tag"
+    "$SourcePrefix/$Image`:$Tag"
   )
 
   foreach ($candidate in $candidates) {

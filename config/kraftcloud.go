@@ -13,16 +13,18 @@ import (
 	"strings"
 )
 
+const cloudAuthEndpoint = "ghcr.io"
+
 // GetKraftCloudLogin is a utility method which retrieves credentials of a
 // KraftCloud user from the given context returning it in AuthConfig format.
 func GetKraftCloudAuthConfig(ctx context.Context, flagToken string) (*AuthConfig, error) {
 	auth := AuthConfig{
-		Endpoint:  "index.unikraft.io",
+		Endpoint:  cloudAuthEndpoint,
 		VerifySSL: true,
 	}
 
 	if flagToken == "" {
-		flagToken = os.Getenv("KRAFTCLOUD_TOKEN")
+		flagToken = os.Getenv("UNIKCTL_CLOUD_TOKEN")
 	}
 
 	if flagToken == "" {
@@ -30,11 +32,15 @@ func GetKraftCloudAuthConfig(ctx context.Context, flagToken string) (*AuthConfig
 	}
 
 	if flagToken == "" {
-		flagToken = os.Getenv("UNIKRAFTCLOUD_TOKEN")
+		flagToken = os.Getenv("UKC_TOKEN")
 	}
 
 	if flagToken == "" {
-		flagToken = os.Getenv("UKC_TOKEN")
+		flagToken = os.Getenv("KRAFTCLOUD_TOKEN")
+	}
+
+	if flagToken == "" {
+		flagToken = os.Getenv("UNIKRAFTCLOUD_TOKEN")
 	}
 
 	// Prioritize environmental variables
@@ -54,17 +60,17 @@ func GetKraftCloudAuthConfig(ctx context.Context, flagToken string) (*AuthConfig
 
 		if G[KraftKit](ctx).Auth == nil {
 			authMap := map[string]AuthConfig{}
-			authMap["index.unikraft.io"] = auth
+			authMap[cloudAuthEndpoint] = auth
 			(*G[KraftKit](ctx)).Auth = authMap
 		} else {
-			G[KraftKit](ctx).Auth["index.unikraft.io"] = auth
+			G[KraftKit](ctx).Auth[cloudAuthEndpoint] = auth
 		}
 
 		// Fallback to local config
-	} else if auth, ok := G[KraftKit](ctx).Auth["index.unikraft.io"]; ok {
+	} else if auth, ok := G[KraftKit](ctx).Auth[cloudAuthEndpoint]; ok {
 		return &auth, nil
 	} else {
-		return nil, fmt.Errorf("could not determine unikraft cloud user token: try setting `UKC_TOKEN`")
+		return nil, fmt.Errorf("could not determine cloud user token: try setting `UNIKCTL_CLOUD_TOKEN` or `UKC_TOKEN`")
 	}
 
 	return &auth, nil
@@ -88,7 +94,7 @@ func HydrateKraftCloudAuthInContext(ctx context.Context) (context.Context, error
 		G[KraftKit](ctx).Auth = make(map[string]AuthConfig)
 	}
 
-	G[KraftKit](ctx).Auth["index.unikraft.io"] = *auth
+	G[KraftKit](ctx).Auth[cloudAuthEndpoint] = *auth
 
 	return ctx, nil
 }

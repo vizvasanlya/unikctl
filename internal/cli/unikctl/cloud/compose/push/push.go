@@ -23,6 +23,7 @@ import (
 	"unikctl.sh/compose"
 	"unikctl.sh/config"
 	"unikctl.sh/internal/cli/unikctl/cloud/utils"
+	cliutils "unikctl.sh/internal/cli/unikctl/utils"
 	"unikctl.sh/log"
 	"unikctl.sh/packmanager"
 	"unikctl.sh/tui/processtree"
@@ -125,21 +126,10 @@ func Push(ctx context.Context, opts *PushOptions, args ...string) error {
 		}
 
 		user := strings.TrimSuffix(strings.TrimPrefix(opts.Auth.User, "robot$"), ".users.kraftcloud")
-		if split := strings.Split(pkgName, "/"); len(split) > 1 {
-			user = split[0]
-			pkgName = strings.Join(split[1:], "/")
+		if !strings.Contains(pkgName, "/") {
+			pkgName = fmt.Sprintf("%s/%s", user, pkgName)
 		}
-
-		if strings.HasPrefix(pkgName, "unikraft.io") {
-			pkgName = "index." + pkgName
-		}
-		if !strings.HasPrefix(pkgName, "index.unikraft.io") {
-			pkgName = fmt.Sprintf(
-				"index.unikraft.io/%s/%s",
-				user,
-				pkgName,
-			)
-		}
+		pkgName = cliutils.RewrapAsKraftCloudPackage(pkgName)
 
 		if !strings.Contains(pkgName, ":") {
 			pkgName = fmt.Sprintf("%s:latest", pkgName)

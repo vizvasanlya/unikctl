@@ -4,7 +4,7 @@ A stripped down version of [libcontainer][1], with the bare minimum
 functionalities preserved for running Linux VMMs (QEMU, Firecracker) while
 remaining compliant with the [OCI runtime][2] flow.
 
-Its main purpose is to back Unikraft's [`runu`](../cmd/runu) OCI runtime CLI.
+Its main purpose is to back the repository's [`runu`](../cmd/runu) OCI runtime CLI.
 
 ## Maintenance
 

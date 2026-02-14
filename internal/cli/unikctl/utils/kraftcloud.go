@@ -4,18 +4,32 @@ import (
 	"strings"
 )
 
-// RewrapAsKraftCloudPackage returns the equivalent package name as a
-// KraftCloud package.
-func RewrapAsKraftCloudPackage(name string) string {
-	name = strings.Replace(name, "unikarft.org/", "index.unikraft.io/", 1)
+const cloudRegistryPrefix = "ghcr.io/vizvasanlya/unikctl"
 
-	if strings.HasPrefix(name, "unikraft.io") {
-		name = "index." + name
-	} else if strings.Contains(name, "/") && !strings.Contains(name, "unikraft.io") {
-		name = "index.unikraft.io/" + name
-	} else if !strings.HasPrefix(name, "index.unikraft.io") {
-		name = "index.unikraft.io/official/" + name
+// RewrapAsKraftCloudPackage returns the equivalent package name in the
+// configured cloud registry namespace.
+func RewrapAsKraftCloudPackage(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return cloudRegistryPrefix + "/base:latest"
 	}
 
-	return name
+	if strings.HasPrefix(name, cloudRegistryPrefix) {
+		return name
+	}
+
+	trimmed := name
+	trimmed = strings.TrimPrefix(trimmed, "ghcr.io/official/")
+	trimmed = strings.TrimPrefix(trimmed, "official/")
+	trimmed = strings.TrimPrefix(trimmed, "/")
+
+	if strings.HasPrefix(trimmed, "ghcr.io/") {
+		return trimmed
+	}
+
+	if strings.Contains(trimmed, "/") {
+		return "ghcr.io/" + trimmed
+	}
+
+	return cloudRegistryPrefix + "/" + trimmed
 }

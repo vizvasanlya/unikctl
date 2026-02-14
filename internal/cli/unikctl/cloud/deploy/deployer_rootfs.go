@@ -11,6 +11,7 @@ import (
 	kcinstances "sdk.kraft.cloud/instances"
 	kcservices "sdk.kraft.cloud/services"
 
+	cliutils "unikctl.sh/internal/cli/unikctl/utils"
 	"unikctl.sh/log"
 	"unikctl.sh/unikraft/app"
 	"unikctl.sh/unikraft/arch"
@@ -70,19 +71,13 @@ func (deployer *deployerRootfs) Deployable(ctx context.Context, opts *DeployOpti
 			rt = opts.Runtime
 			platform = plat.NewPlatformFromOptions()
 
-			// Sanitize the runtime for Unikraft Cloud.
+			// Sanitize the runtime for the configured registry namespace.
 
 			if !strings.Contains(rt, ":") {
 				rt += ":latest"
 			}
 
-			if strings.HasPrefix(rt, "unikraft.io") {
-				rt = "index." + rt
-			} else if strings.Contains(rt, "/") && !strings.Contains(rt, "unikraft.io") {
-				rt = "index.unikraft.io/" + rt
-			} else if !strings.HasPrefix(rt, "index.unikraft.io") {
-				rt = "index.unikraft.io/official/" + rt
-			}
+			rt = cliutils.RewrapAsKraftCloudPackage(rt)
 		}
 
 		runtime, err := runtime.NewRuntime(ctx, rt,

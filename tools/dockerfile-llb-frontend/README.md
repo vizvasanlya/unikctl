@@ -1,12 +1,12 @@
-# KraftKit LLB Plugin
+# unikctl LLB Plugin
 
-This KraftKit LLB Plugin enables running Unikraft builds using Docker commands.
+This LLB plugin enables running unikernel builds using Docker commands.
 
-It eliminates the need for installing KraftKit or Unikraft-specific dependencies on your machine by executing builds in containers.
+It eliminates the need for installing extra host-side unikernel build dependencies by executing builds in containers.
 
-The result is a Unikraft image saved in your local Docker registry.
+The result is a built image saved in your local Docker registry.
 
-**Please note:** If you are unfamiliar with Unikraft, KraftKit, or unikernels, kindly refer to the [Unikraft Documentation](https://unikraft.org/docs/getting-started/).
+**Please note:** If you are new to unikernels, start with the main project docs in this repository.
 
 ## Prerequisites
 
@@ -49,7 +49,7 @@ First, build the project:
 go build .
 ```
 
-Then, run the built binary from within a Unikraft app directory:
+Then, run the built binary from within a unikernel app directory:
 
 ```sh
 dockerfile-llb-frontend --llb-stdout=true | buildctl debug dump-llb
@@ -61,7 +61,7 @@ To learn more about this, see this [BuildKit doc](https://github.com/moby/buildk
 
 We warmly welcome contributions in the form of tests, bug reports, and feature requests.
 
-For discussions or queries, join us on Discord: https://bit.ly/UnikraftDiscord
+For discussions or queries, open an issue in this repository.
 
 ### Testing
 

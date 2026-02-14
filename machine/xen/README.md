@@ -18,19 +18,19 @@ $ find . -type f -exec sed -i 's/4.19/4.18/g' {} +
 $ go get -u xenbits.xenproject.org/git-http/xen.git/tools/golang/xenlight@RELEASE-4.18.0 && go mod tidy
 ```
 
-3. Rebuild the KraftKit build environment:
+3. Rebuild the unikctl build environment:
 ```console
 $ make buildenv-xen buildenv-myself-full buildenv-myself
 ```
 
 4. Start the build container:
 ```console
-$ docker run --rm -it --entrypoint /bin/bash -v .:/tmp/kraftkit unikctl.sh/myself-full:latest
+$ docker run --rm -it --entrypoint /bin/bash -v .:/tmp/unikctl unikctl.sh/myself-full:latest
 ```
 
-5. Rebuild KraftKit:
+5. Rebuild unikctl:
 ```console
-$ cd /tmp/kraftkit && make unikctl
+$ cd /tmp/unikctl && make unikctl
 ```
 
 That's it!

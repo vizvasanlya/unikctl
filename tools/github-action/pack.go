@@ -23,6 +23,8 @@ import (
 	"unikctl.sh/unikraft/target"
 )
 
+const cloudRegistryPrefix = "ghcr.io/vizvasanlya/unikctl"
+
 // initProject sets up the project based on the provided context and
 // options.
 func (opts *GithubAction) initProject(ctx context.Context) error {
@@ -50,17 +52,23 @@ func (opts *GithubAction) initProject(ctx context.Context) error {
 // RewrapAsKraftCloudPackage returns the equivalent package name as a
 // KraftCloud package.
 func (opts *GithubAction) rewrapAsKraftCloudPackage(name string) string {
-	name = strings.Replace(name, "unikarft.org/", "index.unikraft.io/", 1)
-
-	if strings.HasPrefix(name, "unikraft.io") {
-		name = "index." + name
-	} else if strings.Contains(name, "/") && !strings.Contains(name, "unikraft.io") {
-		name = "index.unikraft.io/" + name
-	} else if !strings.HasPrefix(name, "index.unikraft.io") {
-		name = "index.unikraft.io/official/" + name
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return cloudRegistryPrefix + "/base:latest"
 	}
 
-	return name
+	name = strings.TrimPrefix(name, "ghcr.io/official/")
+	name = strings.TrimPrefix(name, "official/")
+
+	if strings.HasPrefix(name, "ghcr.io/") {
+		return name
+	}
+
+	if strings.Contains(name, "/") {
+		return "ghcr.io/" + name
+	}
+
+	return cloudRegistryPrefix + "/" + name
 }
 
 // aggregateEnvs aggregates the environment variables from the project and

@@ -6,7 +6,7 @@ on:
       source_prefix:
         description: "Source runtime registry prefix"
         required: false
-        default: "unikraft.org"
+        default: "ghcr.io/vizvasanlya/unikctl-runtime"
       target_prefix:
         description: "Target runtime registry prefix"
         required: false

@@ -28,20 +28,20 @@ import (
 )
 
 type CloudOptions struct {
-	Metro         string `long:"metro" env:"UKC_METRO" usage:"Unikraft Cloud metro location"`
-	Token         string `long:"token" env:"UKC_TOKEN" usage:"Unikraft Cloud access token"`
-	AllowInsecure bool   `long:"allow-insecure" usage:"Allow insecure connections to the Unikraft Cloud API"`
+	Metro         string `long:"metro" env:"UKC_METRO" usage:"Unikctl Cloud metro location"`
+	Token         string `long:"token" env:"UKC_TOKEN" usage:"Unikctl Cloud access token"`
+	AllowInsecure bool   `long:"allow-insecure" usage:"Allow insecure connections to the Unikctl Cloud API"`
 }
 
 func NewCmd() *cobra.Command {
 	cmd, err := cmdfactory.New(&CloudOptions{}, cobra.Command{
-		Short:   "Manage resources on Unikraft Cloud",
+		Short:   "Manage resources on Unikctl Cloud",
 		Use:     "cloud [FLAGS] [SUBCOMMAND|DIR]",
 		Aliases: []string{"cl"},
 		Long: heredoc.Docf(`
-			Manage resources on Unikraft Cloud.
+			Manage resources on Unikctl Cloud.
 
-			Learn more & sign up at https://unikraft.cloud
+			Learn more at https://github.com/vizvasanlya/unikctl
 
 			Quickly switch between metros using the %[1]s--metro%[1]s flag or use the
 			%[1]sUKC_METRO%[1]s environmental variable.

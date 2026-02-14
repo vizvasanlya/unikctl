@@ -16,6 +16,7 @@ import (
 
 	"unikctl.sh/config"
 	instancecreate "unikctl.sh/internal/cli/unikctl/cloud/instance/create"
+	cliutils "unikctl.sh/internal/cli/unikctl/utils"
 	"unikctl.sh/log"
 	"unikctl.sh/oci"
 	"unikctl.sh/packmanager"
@@ -51,13 +52,7 @@ func (deployer *deployerImageName) Deployable(ctx context.Context, opts *DeployO
 
 	imageName := args[0]
 
-	if strings.HasPrefix(imageName, "unikraft.io") {
-		imageName = "index." + imageName
-	} else if strings.Contains(imageName, "/") && !strings.Contains(imageName, "unikraft.io") {
-		imageName = "index.unikraft.io/" + imageName
-	} else if !strings.HasPrefix(imageName, "index.unikraft.io") {
-		imageName = "index.unikraft.io/official/" + imageName
-	}
+	imageName = cliutils.RewrapAsKraftCloudPackage(imageName)
 
 	if _, compatible, err := pm.IsCompatible(ctx, imageName,
 		packmanager.WithRemote(true),

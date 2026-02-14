@@ -29,6 +29,7 @@ import (
 	"unikctl.sh/cmdfactory"
 	"unikctl.sh/config"
 	"unikctl.sh/internal/cli/unikctl/cloud/utils"
+	cliutils "unikctl.sh/internal/cli/unikctl/utils"
 	"unikctl.sh/log"
 	"unikctl.sh/tui/processtree"
 	"unikctl.sh/tui/selection"
@@ -121,8 +122,7 @@ func Create(ctx context.Context, opts *CreateOptions, args ...string) (*kcclient
 	}
 
 	// Sanitize image name
-	opts.Image = strings.TrimPrefix(opts.Image, "index.unikraft.io/")
-	opts.Image = strings.TrimPrefix(opts.Image, "official/")
+	opts.Image = cliutils.RewrapAsKraftCloudPackage(opts.Image)
 
 	// Replace all slashes in the name with dashes.
 	opts.Name = strings.ReplaceAll(opts.Name, "/", "-")

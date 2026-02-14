@@ -17,6 +17,7 @@ import (
 
 	"unikctl.sh/internal/cli/unikctl/cloud/instance/create"
 	"unikctl.sh/internal/cli/unikctl/pkg"
+	cliutils "unikctl.sh/internal/cli/unikctl/utils"
 	"unikctl.sh/log"
 )
 
@@ -54,13 +55,7 @@ func (deployer *deployerKraftfileRuntime) Deployable(ctx context.Context, opts *
 	if opts.Runtime != "" {
 		opts.Project.Runtime().SetName(opts.Runtime)
 	}
-	if strings.HasPrefix(opts.Project.Runtime().Name(), "unikraft.io") {
-		opts.Project.Runtime().SetName("index." + opts.Project.Runtime().Name())
-	} else if strings.Contains(opts.Project.Runtime().Name(), "/") && !strings.Contains(opts.Project.Runtime().Name(), "unikraft.io") {
-		opts.Project.Runtime().SetName("index.unikraft.io/" + opts.Project.Runtime().Name())
-	} else if !strings.HasPrefix(opts.Project.Runtime().Name(), "index.unikraft.io") {
-		opts.Project.Runtime().SetName("index.unikraft.io/official/" + opts.Project.Runtime().Name())
-	}
+	opts.Project.Runtime().SetName(cliutils.RewrapAsKraftCloudPackage(opts.Project.Runtime().Name()))
 
 	updateOptsFromProject(opts)
 
@@ -88,16 +83,7 @@ func (deployer *deployerKraftfileRuntime) Deploy(ctx context.Context, opts *Depl
 		pkgName = strings.Join(split[1:], "/")
 	}
 
-	if strings.HasPrefix(pkgName, "unikraft.io") {
-		pkgName = "index." + pkgName
-	}
-	if !strings.HasPrefix(pkgName, "index.unikraft.io") {
-		pkgName = fmt.Sprintf(
-			"index.unikraft.io/%s/%s:latest",
-			user,
-			pkgName,
-		)
-	}
+	pkgName = cliutils.RewrapAsKraftCloudPackage(fmt.Sprintf("%s/%s:latest", user, pkgName))
 
 	if opts.Project != nil && opts.Project.Env() != nil {
 		var projectEnv []string

@@ -18,7 +18,7 @@ import (
 )
 
 func TestNewFromOCIImageToCPIO(t *testing.T) {
-	const rootfsDockerfile = "index.unikraft.io/unikctl.sh/unit-test-ociimage:latest"
+	const rootfsDockerfile = "ghcr.io/vizvasanlya/unikctl-runtime/unit-test-ociimage:latest"
 
 	ctx := context.Background()
 

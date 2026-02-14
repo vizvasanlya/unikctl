@@ -4,7 +4,7 @@ set -euo pipefail
 # Mirrors runtime images into your unikctl registry namespace.
 #
 # Defaults:
-#   SOURCE_PREFIX=unikraft.org
+#   SOURCE_PREFIX=ghcr.io/vizvasanlya/unikctl-runtime
 #   TARGET_PREFIX=ghcr.io/vizvasanlya/unikctl
 #   IMAGES=base,nodejs,python,java,dotnet
 #   TAGS=latest
@@ -17,7 +17,7 @@ set -euo pipefail
 #   TAGS=latest,v0.1.11 ./scripts/publish-runtimes.sh
 #   SOURCE_PREFIX=registry.example.com/runtime TARGET_PREFIX=ghcr.io/me/unikctl ./scripts/publish-runtimes.sh
 
-SOURCE_PREFIX="${SOURCE_PREFIX:-unikraft.org}"
+SOURCE_PREFIX="${SOURCE_PREFIX:-ghcr.io/vizvasanlya/unikctl-runtime}"
 TARGET_PREFIX="${TARGET_PREFIX:-ghcr.io/vizvasanlya/unikctl}"
 IMAGES_CSV="${IMAGES:-base,nodejs,python,java,dotnet}"
 TAGS_CSV="${TAGS:-latest}"
@@ -103,8 +103,6 @@ resolve_source_ref() {
 
   candidates+=(
     "${SOURCE_PREFIX}/${image}:${tag}"
-    "index.unikraft.io/unikraft.org/${image}:${tag}"
-    "index.unikraft.io/official/${image}:${tag}"
   )
 
   for candidate in "${candidates[@]}"; do

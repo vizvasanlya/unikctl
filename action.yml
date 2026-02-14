@@ -1,6 +1,6 @@
-name: Build unikernel images with Unikraft
-description: Build, push and run unikernel images with Unikraft.
-author: Unikraft
+name: Build unikernel images with unikctl
+description: Build, push and run unikernel images with unikctl.
+author: unikctl
 
 branding:
   icon: package
@@ -41,7 +41,7 @@ inputs:
     required: false
     default: "true"
   manifests:
-    description: List of Unikraft source manifests
+    description: List of source manifests
     required: false
   buildkit:
     description: Setup BuildKit before running the action
@@ -130,7 +130,7 @@ inputs:
 
 runs:
   # Use a composite type so we can set up BuildKit beforehand so that
-  # `Dockerfile`s can be built as root filesystems.  Next, run KraftKit's GitHub
+  # `Dockerfile`s can be built as root filesystems.  Next, run unikctl's GitHub
   # Action program via Docker which has been built as a container image so that
   # all the necessary dependencies for building, packaging and excuting the
   # unikernel are available.  Attach all known environmental variables and the

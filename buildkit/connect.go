@@ -108,7 +108,7 @@ func ConnectToBuildkit(ctx context.Context) (c *client.Client, cleanup func(), r
 			log.G(ctx).Warn("or")
 			log.G(ctx).Warn("  export KRAFTKIT_BUILDKIT_HOST=podman-container://buildkit # for podman")
 			log.G(ctx).Warn("")
-			log.G(ctx).Warn("For more usage instructions visit: https://unikraft.org/buildkit")
+			log.G(ctx).Warn("For more usage instructions visit: https://github.com/vizvasanlya/unikctl#readme")
 			log.G(ctx).Warn("")
 		}()
 

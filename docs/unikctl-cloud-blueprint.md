@@ -124,12 +124,12 @@ Current implementation note:
 
 ## Legal and Fork Compliance
 
-Because this is derived from Unikraft/KraftKit:
+Because this repository is derived from an upstream open-source base:
 
 - Keep upstream license files intact (`BSD-3-Clause`).
-- Keep copyright/author attribution.
-- Do not imply official sponsorship by Unikraft.
-- Rename product/CLI branding (`unikctl`) in user-facing UX.
+- Keep copyright and author attribution.
+- Do not imply official sponsorship by upstream organizations.
+- Keep product/CLI branding user-facing as `unikctl`.
 - Maintain a fork notice in docs.
 
 ## Delivery Phases

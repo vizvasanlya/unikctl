@@ -26,6 +26,7 @@ import (
 	"unikctl.sh/internal/cli/unikctl/build"
 	"unikctl.sh/internal/cli/unikctl/cloud/utils"
 	"unikctl.sh/internal/cli/unikctl/pkg"
+	cliutils "unikctl.sh/internal/cli/unikctl/utils"
 	"unikctl.sh/log"
 	"unikctl.sh/packmanager"
 	"unikctl.sh/unikraft/app"
@@ -181,19 +182,19 @@ func Build(ctx context.Context, opts *BuildOptions, args ...string) error {
 			}
 
 			appName = strings.ReplaceAll(service.Image, "/", "-")
-			pkgName = fmt.Sprintf(
-				"index.unikraft.io/%s/%s",
-				userName,
-				strings.ReplaceAll(service.Image, "_", "-"),
-			)
+			imageName := strings.ReplaceAll(service.Image, "_", "-")
+			if !strings.Contains(imageName, "/") {
+				imageName = fmt.Sprintf("%s/%s", userName, imageName)
+			}
+			pkgName = cliutils.RewrapAsKraftCloudPackage(imageName)
 		} else {
 			appName = opts.Project.Name + "-" + service.Name
-			pkgName = fmt.Sprintf(
-				"index.unikraft.io/%s/%s-%s",
+			pkgName = cliutils.RewrapAsKraftCloudPackage(fmt.Sprintf(
+				"%s/%s-%s",
 				userName,
 				strings.ReplaceAll(opts.Project.Name, "_", "-"),
 				strings.ReplaceAll(service.Name, "_", "-"),
-			)
+			))
 		}
 
 		var project app.Application
@@ -286,11 +287,11 @@ func Build(ctx context.Context, opts *BuildOptions, args ...string) error {
 			var runtimeName string
 			if found, ok := runtimes[serviceName]; ok {
 				if !strings.Contains(found, "/") {
-					found = fmt.Sprintf("index.unikraft.io/official/%s", found)
+					found = "official/" + found
 				}
-				runtimeName = found
+				runtimeName = cliutils.RewrapAsKraftCloudPackage(found)
 			} else {
-				runtimeName = runtime.DefaultKraftCloudRuntime
+				runtimeName = cliutils.RewrapAsKraftCloudPackage(runtime.DefaultKraftCloudRuntime)
 			}
 
 			log.G(ctx).
@@ -385,7 +386,7 @@ func (opts *BuildOptions) Run(ctx context.Context, args []string) error {
 	return Build(ctx, opts, args...)
 }
 
-// imageExists checks if an image exists in the KraftCloud registry.
+// imageExists checks if an image exists in the configured cloud registry.
 func (opts *BuildOptions) imageExists(ctx context.Context, name string) (exists bool, err error) {
 	if name == "" {
 		return false, fmt.Errorf("image name is empty")
