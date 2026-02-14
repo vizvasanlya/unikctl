@@ -72,7 +72,7 @@ func NewCmd() *cobra.Command {
 			$ unikctl pkg pull nginx:1.21.6
 
 			# Pull from a registry
-			$ unikctl pkg pull unikraft.org/nginx:1.21.6
+			$ unikctl pkg pull ghcr.io/vizvasanlya/unikctl/nginx:1.21.6
 		`),
 		Annotations: map[string]string{
 			cmdfactory.AnnotationHelpGroup: "pkg",

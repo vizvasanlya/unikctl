@@ -50,7 +50,7 @@ func New() *cobra.Command {
 		Args: cmdfactory.ExactArgs(1, "package name not specified"),
 		Example: heredoc.Doc(`
 			# Exports the NGINX OCI package to a tarball.
-			$ unikctl pkg export unikraft.org/nginx:1.15 -M oci -o ./output.tar.gz
+			$ unikctl pkg export ghcr.io/vizvasanlya/unikctl/nginx:1.15 -M oci -o ./output.tar.gz
 		`),
 		Annotations: map[string]string{
 			cmdfactory.AnnotationHelpGroup: "pkg",

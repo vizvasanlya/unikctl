@@ -329,7 +329,7 @@ func Main(args []string) int {
 		log.G(ctx).Warn("mixing invocations of unikctl with sudo can lead to unexpected behavior")
 		log.G(ctx).Warn("read more on how to use unikctl without sudo at:")
 		log.G(ctx).Warn("")
-		log.G(ctx).Warn("\thttps://unikraft.org/sudoless")
+		log.G(ctx).Warn("\thttps://github.com/vizvasanlya/unikctl#readme")
 		log.G(ctx).Warn("")
 		log.G(ctx).Warn("to hide and ignore this warning message, set the environmental variable:")
 		log.G(ctx).Warn("")

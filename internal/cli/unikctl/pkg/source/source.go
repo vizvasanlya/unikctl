@@ -47,8 +47,8 @@ func NewCmd() *cobra.Command {
 			# Add a manifest of components
 			$ unikctl pkg source https://manifests.unikctl.sh/index.yaml
 
-			# Add a Unikraft-compatible OCI compatible registry
-			$ unikctl pkg source unikraft.org
+			# Add a unikctl-compatible OCI compatible registry
+			$ unikctl pkg source ghcr.io
 		`),
 		Annotations: map[string]string{
 			cmdfactory.AnnotationHelpGroup: "pkg",

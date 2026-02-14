@@ -42,7 +42,7 @@ func NewCmd() *cobra.Command {
 			unikctl pkg remove --all
 
 			# Remove only select OCI index packages
-			unikctl pkg remove --format=oci unikraft.org/nginx:latest
+			unikctl pkg remove --format=oci ghcr.io/vizvasanlya/unikctl/nginx:latest
 		`),
 		Annotations: map[string]string{
 			cmdfactory.AnnotationHelpGroup: "pkg",

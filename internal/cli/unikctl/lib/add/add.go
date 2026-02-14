@@ -57,7 +57,7 @@ func NewCmd() *cobra.Command {
 			$ unikctl lib add nginx:staging
 
 			# Add a library from a registry
-			$ unikctl lib add unikraft.org/nginx:stable
+			$ unikctl lib add ghcr.io/vizvasanlya/unikctl/nginx:stable
 		`),
 	})
 	if err != nil {

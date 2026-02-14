@@ -131,7 +131,7 @@ func NewCmd() *cobra.Command {
 			$ unikctl run --arch x86_64 --plat qemu --memory 1Gi path/to/kernel-x86_64-qemu
 
 			Run an OCI-compatible unikernel, mapping port 8080 on the host to port 80 in the unikernel:
-			$ unikctl run -p 8080:80 unikraft.org/nginx:latest
+			$ unikctl run -p 8080:80 ghcr.io/vizvasanlya/unikctl/nginx:latest
 
 			Attach the unikernel to an existing network kraft0:
 			$ unikctl run --network kraft0
@@ -152,7 +152,7 @@ func NewCmd() *cobra.Command {
 			$ unikctl run --rootfs ./initramfs.cpio --volume ./path/to/dir:/dir
 
 			Customize the default content directory of the official Unikraft NGINX OCI-compatible unikernel and map port 8080 to localhost:
-			$ unikctl run -v ./path/to/html:/nginx/html -p 8080:80 unikraft.org/nginx:latest
+			$ unikctl run -v ./path/to/html:/nginx/html -p 8080:80 ghcr.io/vizvasanlya/unikctl/nginx:latest
 		`),
 		Annotations: map[string]string{
 			cmdfactory.AnnotationHelpGroup: "run",

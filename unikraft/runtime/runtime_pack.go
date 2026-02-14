@@ -23,9 +23,9 @@ import (
 var _ pack.Package = (*Runtime)(nil)
 
 const (
-	PrebuiltRegistry         = "unikraft.org"
-	DefaultRuntime           = "unikraft.org/base:latest"
-	DefaultKraftCloudRuntime = "index.unikraft.io/official/base:latest"
+	PrebuiltRegistry         = "ghcr.io"
+	DefaultRuntime           = "ghcr.io/vizvasanlya/unikctl/base:latest"
+	DefaultKraftCloudRuntime = "ghcr.io/vizvasanlya/unikctl/base:latest"
 )
 
 // NewRuntime prepares a pre-built unikernel application for use.

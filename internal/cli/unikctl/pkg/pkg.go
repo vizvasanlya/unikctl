@@ -272,7 +272,7 @@ func NewCmd() *cobra.Command {
 		`, "`"),
 		Example: heredoc.Doc(`
 			# Package a project as an OCI archive and embed the target's KConfig.
-			$ unikctl pkg --as oci --name unikraft.org/nginx:latest
+			$ unikctl pkg --as oci --name ghcr.io/vizvasanlya/unikctl/nginx:latest
 		`),
 		Annotations: map[string]string{
 			cmdfactory.AnnotationHelpGroup: "pkg",

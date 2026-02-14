@@ -287,7 +287,7 @@ For Node frontend projects with a `build` script (for example React + TypeScript
 
 - `unikctl build` runs `npm install` and `npm run build`.
 - If static output is detected (`dist/`, `build/`, or `out/`), unikctl packages it with an embedded static HTTP server binary.
-- Runtime defaults to `unikraft.org/base:latest` for this static frontend mode.
+- Runtime defaults to `ghcr.io/vizvasanlya/unikctl/base:latest` for this static frontend mode.
 
 For Python source projects:
 
@@ -296,7 +296,7 @@ For Python source projects:
 
 Runtime resolution behavior:
 
-- Runtime aliases are normalized to fully-qualified references (for example `nodejs:latest` -> `unikraft.org/nodejs:latest`).
+- Runtime aliases are normalized to fully-qualified references (for example `nodejs:latest` -> `ghcr.io/vizvasanlya/unikctl/nodejs:latest`).
 - Runtime lookup uses fallback candidates when the first reference is unavailable.
 
 Deterministic release behavior:

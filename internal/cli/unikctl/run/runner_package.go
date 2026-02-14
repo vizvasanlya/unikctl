@@ -40,7 +40,7 @@ import (
 // package.  Typically this is used in the OCI usecase where a compatible image
 // is referenced which contains a pre-built Unikraft unikernel.  E.g.:
 //
-//	$ unikctl run unikraft.org/helloworld:latest
+//	$ unikctl run ghcr.io/vizvasanlya/unikctl/helloworld:latest
 type runnerPackage struct {
 	packName string
 	args     []string

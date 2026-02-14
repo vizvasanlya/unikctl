@@ -54,7 +54,7 @@ func NewCmd() *cobra.Command {
 			$ unikctl pkg push /path/to/app
 
 			# Push the image with a given name
-			$ unikctl pkg push unikraft.org/helloworld:latest
+			$ unikctl pkg push ghcr.io/vizvasanlya/unikctl/helloworld:latest
 		`),
 		Annotations: map[string]string{
 			cmdfactory.AnnotationHelpGroup: "pkg",

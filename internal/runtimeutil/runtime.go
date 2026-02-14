@@ -8,6 +8,13 @@ import (
 	"strings"
 )
 
+const (
+	RuntimeRegistryHost      = "ghcr.io"
+	RuntimeRegistryNamespace = "vizvasanlya/unikctl"
+	RuntimeRegistryPrefix    = RuntimeRegistryHost + "/" + RuntimeRegistryNamespace
+	DefaultRuntime           = RuntimeRegistryPrefix + "/base:latest"
+)
+
 var aliases = map[string]string{
 	"base":       "base",
 	"node":       "nodejs",
@@ -58,10 +65,10 @@ func NormalizeName(name string) string {
 	}
 
 	if mapped, ok := aliases[strings.ToLower(name)]; ok {
-		return "unikraft.org/" + mapped
+		return RuntimeRegistryPrefix + "/" + mapped
 	}
 
-	return "unikraft.org/" + strings.ToLower(name)
+	return RuntimeRegistryPrefix + "/" + strings.ToLower(name)
 }
 
 func Normalize(reference, defaultVersion string) string {
@@ -115,18 +122,15 @@ func Candidates(reference, defaultVersion string) []Reference {
 	appendUnique(normalized)
 	appendUnique(raw)
 
-	// Allow fallback to short name for registries that index runtime without prefix.
-	if strings.HasPrefix(normalized.Name, "unikraft.org/") {
+	// Allow fallback to namespace-qualified and short names.
+	if strings.HasPrefix(normalized.Name, RuntimeRegistryPrefix+"/") {
+		short := strings.TrimPrefix(normalized.Name, RuntimeRegistryPrefix+"/")
 		appendUnique(Reference{
-			Name:    strings.TrimPrefix(normalized.Name, "unikraft.org/"),
+			Name:    RuntimeRegistryNamespace + "/" + short,
 			Version: normalized.Version,
 		})
-	}
-
-	// Allow fallback to official index namespace.
-	if strings.HasPrefix(normalized.Name, "unikraft.org/") {
 		appendUnique(Reference{
-			Name:    "index.unikraft.io/official/" + strings.TrimPrefix(normalized.Name, "unikraft.org/"),
+			Name:    short,
 			Version: normalized.Version,
 		})
 	}

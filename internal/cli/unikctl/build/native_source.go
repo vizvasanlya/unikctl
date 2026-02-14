@@ -197,9 +197,9 @@ func runNativeSourcePipeline(ctx context.Context, opts *BuildOptions) (*nativePi
 		"elapsed":       time.Since(buildStarted).Round(time.Second).String(),
 	}).Info("native build step completed")
 
-	runtimeName := runtimeutil.Normalize(firstNonEmpty(cfg.Runtime, buildResult.Runtime, "unikraft.org/base:latest"), "latest")
+	runtimeName := runtimeutil.Normalize(firstNonEmpty(cfg.Runtime, buildResult.Runtime, runtimeutil.DefaultRuntime), "latest")
 	if runtimeName == "" {
-		runtimeName = "unikraft.org/base:latest"
+		runtimeName = runtimeutil.DefaultRuntime
 	}
 	command := buildResult.Command
 	if len(cfg.Run.Command) > 0 {
@@ -320,7 +320,7 @@ func (*goPack) Build(ctx context.Context, opts *BuildOptions, workdir, rootfsDir
 	}
 
 	return &nativeBuildResult{
-		Runtime: "unikraft.org/base:latest",
+		Runtime: runtimeutil.DefaultRuntime,
 		Command: []string{"/app/app"},
 	}, nil
 }
@@ -359,7 +359,7 @@ func (*rustPack) Build(ctx context.Context, opts *BuildOptions, workdir, rootfsD
 	}
 
 	return &nativeBuildResult{
-		Runtime: "unikraft.org/base:latest",
+		Runtime: runtimeutil.DefaultRuntime,
 		Command: []string{"/app/app"},
 	}, nil
 }
@@ -415,7 +415,7 @@ func (*nodePack) Build(ctx context.Context, opts *BuildOptions, workdir, rootfsD
 			}
 
 			return &nativeBuildResult{
-				Runtime: "unikraft.org/base:latest",
+				Runtime: runtimeutil.DefaultRuntime,
 				Command: []string{"/app/app", "--dir", "/app/www", "--addr", ":8080"},
 			}, nil
 		}
@@ -427,7 +427,7 @@ func (*nodePack) Build(ctx context.Context, opts *BuildOptions, workdir, rootfsD
 	}
 
 	return &nativeBuildResult{
-		Runtime: "unikraft.org/nodejs:latest",
+		Runtime: runtimeutil.RuntimeRegistryPrefix + "/nodejs:latest",
 		Command: []string{"node", "/app/" + filepath.ToSlash(mainEntry)},
 	}, nil
 }
@@ -484,13 +484,13 @@ func (*pythonPack) Build(ctx context.Context, opts *BuildOptions, workdir, rootf
 
 	if len(cfg.Run.Command) > 0 {
 		return &nativeBuildResult{
-			Runtime: "unikraft.org/python:latest",
+			Runtime: runtimeutil.RuntimeRegistryPrefix + "/python:latest",
 			Command: cfg.Run.Command,
 		}, nil
 	}
 
 	return &nativeBuildResult{
-		Runtime: "unikraft.org/python:latest",
+		Runtime: runtimeutil.RuntimeRegistryPrefix + "/python:latest",
 		Command: pythonCommand,
 	}, nil
 }
@@ -538,7 +538,7 @@ func (*javaPack) Build(ctx context.Context, opts *BuildOptions, workdir, rootfsD
 	}
 
 	return &nativeBuildResult{
-		Runtime: "unikraft.org/java:latest",
+		Runtime: runtimeutil.RuntimeRegistryPrefix + "/java:latest",
 		Command: []string{"java", "-jar", "/app/app.jar"},
 	}, nil
 }
@@ -578,7 +578,7 @@ func (*dotnetPack) Build(ctx context.Context, opts *BuildOptions, workdir, rootf
 	}
 
 	return &nativeBuildResult{
-		Runtime: "unikraft.org/dotnet:latest",
+		Runtime: runtimeutil.RuntimeRegistryPrefix + "/dotnet:latest",
 		Command: []string{"dotnet", "/app/" + dllName},
 	}, nil
 }
@@ -628,9 +628,9 @@ func (*customPack) Build(ctx context.Context, opts *BuildOptions, workdir, rootf
 		cmd = []string{"/app/app"}
 	}
 
-	runtimeName := runtimeutil.Normalize(firstNonEmpty(cfg.Runtime, "unikraft.org/base"), "latest")
+	runtimeName := runtimeutil.Normalize(firstNonEmpty(cfg.Runtime, runtimeutil.RuntimeRegistryPrefix+"/base"), "latest")
 	if runtimeName == "" {
-		runtimeName = "unikraft.org/base:latest"
+		runtimeName = runtimeutil.DefaultRuntime
 	}
 
 	return &nativeBuildResult{
@@ -1538,7 +1538,7 @@ func tryReuseNativePipeline(ctx context.Context, workdir, stageDir, packName, mo
 	}
 
 	if metadata.Runtime == "" {
-		metadata.Runtime = "unikraft.org/base:latest"
+		metadata.Runtime = runtimeutil.DefaultRuntime
 	}
 	if len(metadata.Command) == 0 {
 		metadata.Command = []string{"/app/app"}
