@@ -4,8 +4,35 @@
 // You may not use this file except in compliance with the License.
 package firecracker
 
-import "encoding/gob"
+import (
+	"encoding/gob"
+	"reflect"
+	"strings"
+)
+
+func registerLegacyGobAlias(v any) {
+	t := reflect.TypeOf(v)
+	if t == nil {
+		return
+	}
+
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	if t.Name() == "" || t.PkgPath() == "" {
+		return
+	}
+
+	legacyPath := strings.Replace(t.PkgPath(), "unikctl.sh/", "kraftkit.sh/", 1)
+	if legacyPath == t.PkgPath() {
+		return
+	}
+
+	gob.RegisterName(legacyPath+"."+t.Name(), v)
+}
 
 func init() {
 	gob.Register(FirecrackerConfig{})
+	registerLegacyGobAlias(FirecrackerConfig{})
 }

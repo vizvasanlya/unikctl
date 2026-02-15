@@ -254,6 +254,12 @@ func (store *embedded[Spec, Status]) GetList(ctx context.Context, key string, op
 			var obj zip.Object[Spec, Status]
 
 			if err := gob.NewDecoder(&b).Decode(&obj); err != nil {
+				// During rebrand/module-path migrations, previously serialized
+				// interface payloads can reference legacy package names. Skip
+				// undecodable records instead of failing the full list operation.
+				if strings.Contains(err.Error(), "gob: name not registered for interface:") {
+					continue
+				}
 				return err
 			}
 
