@@ -6,8 +6,8 @@ package build
 import (
 	"bufio"
 	"bytes"
-	"debug/elf"
 	"context"
+	"debug/elf"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -213,6 +213,10 @@ func runNativeSourcePipeline(ctx context.Context, opts *BuildOptions) (*nativePi
 		command = []string{"/app/app"}
 	}
 
+	if err := ensureDefaultUnikYAML(ctx, opts.Workdir, cfg, runtimeName, command, pack.Name()); err != nil {
+		log.G(ctx).WithError(err).Debug("could not auto-generate default unik.yaml")
+	}
+
 	if err := writeGeneratedKraftfile(kraftfilePath, runtimeName, command); err != nil {
 		return nil, err
 	}
@@ -243,6 +247,39 @@ func runNativeSourcePipeline(ctx context.Context, opts *BuildOptions) (*nativePi
 		Command:   command,
 		Pack:      pack.Name(),
 	}, nil
+}
+
+func ensureDefaultUnikYAML(
+	ctx context.Context,
+	workdir string,
+	cfg *nativeProjectConfig,
+	runtimeName string,
+	command []string,
+	language string,
+) error {
+	path := filepath.Join(workdir, "unik.yaml")
+	if fileExists(path) {
+		return nil
+	}
+
+	out := &nativeProjectConfig{
+		Version:  firstNonEmpty(cfg.Version, "v1"),
+		Language: firstNonEmpty(cfg.Language, language),
+		Runtime:  runtimeName,
+	}
+	out.Run.Command = append([]string{}, command...)
+
+	raw, err := yaml.Marshal(out)
+	if err != nil {
+		return fmt.Errorf("marshalling auto-generated unik.yaml: %w", err)
+	}
+
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		return fmt.Errorf("writing auto-generated unik.yaml: %w", err)
+	}
+
+	log.G(ctx).WithField("path", path).Info("generated default unik.yaml")
+	return nil
 }
 
 func loadNativeProjectConfig(workdir string) (*nativeProjectConfig, error) {
@@ -308,9 +345,9 @@ func (*goPack) Detect(workdir string) bool {
 func (*goPack) Build(ctx context.Context, opts *BuildOptions, workdir, rootfsDir string, _ *nativeProjectConfig) (*nativeBuildResult, error) {
 	output := filepath.Join(rootfsDir, "app", "app")
 	env := map[string]string{
-		"GOOS":         "linux",
-		"GOARCH":       normalizeGoArch(opts.Architecture),
-		"CGO_ENABLED":  "0",
+		"GOOS":        "linux",
+		"GOARCH":      normalizeGoArch(opts.Architecture),
+		"CGO_ENABLED": "0",
 	}
 
 	args := []string{"build", "-trimpath"}
@@ -504,6 +541,7 @@ func (*pythonPack) Build(ctx context.Context, opts *BuildOptions, workdir, rootf
 
 	pythonCommand, err := detectPythonCommand(appDir)
 	if err != nil {
+		_ = ensurePythonTemplateUnikYAML(ctx, workdir)
 		return nil, err
 	}
 
@@ -529,6 +567,41 @@ func (*pythonPack) Build(ctx context.Context, opts *BuildOptions, workdir, rootf
 		Runtime: runtimeutil.RuntimeRegistryPrefix + "/python:latest",
 		Command: pythonCommand,
 	}, nil
+}
+
+func ensurePythonTemplateUnikYAML(ctx context.Context, workdir string) error {
+	path := filepath.Join(workdir, "unik.yaml")
+	if fileExists(path) {
+		return nil
+	}
+
+	template := &nativeProjectConfig{
+		Version:  "v1",
+		Language: "python",
+		Runtime:  runtimeutil.RuntimeRegistryPrefix + "/python:latest",
+	}
+	template.Run.Command = []string{
+		"python",
+		"-m",
+		"uvicorn",
+		"app.main:app",
+		"--host",
+		"0.0.0.0",
+		"--port",
+		"8080",
+	}
+
+	raw, err := yaml.Marshal(template)
+	if err != nil {
+		return err
+	}
+
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		return err
+	}
+
+	log.G(ctx).WithField("path", path).Warn("python entrypoint auto-detection failed; wrote starter unik.yaml template")
+	return nil
 }
 
 type javaPack struct{}
@@ -1110,9 +1183,9 @@ func buildStaticHTTPServerBinary(ctx context.Context, opts *BuildOptions, rootfs
 
 	goarch := normalizeGoArch(opts.Architecture)
 	env := map[string]string{
-		"GOOS":         "linux",
-		"GOARCH":       goarch,
-		"CGO_ENABLED":  "0",
+		"GOOS":        "linux",
+		"GOARCH":      goarch,
+		"CGO_ENABLED": "0",
 	}
 
 	args := []string{"build", "-trimpath"}
@@ -1293,7 +1366,7 @@ func detectPythonCommand(appDir string) ([]string, error) {
 		return []string{"python", "/app/" + filepath.ToSlash(entry)}, nil
 	}
 
-	return nil, fmt.Errorf("could not detect python entrypoint; add run.command in unik.yaml")
+	return nil, fmt.Errorf("could not detect python entrypoint; add run.command in unik.yaml (a starter template is auto-generated when missing)")
 }
 
 func detectPythonMainModule(appDir string) (string, bool) {

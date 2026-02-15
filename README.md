@@ -105,6 +105,9 @@ Supported packs include common flows such as:
 - Python service projects
 - Go services
 
+If `unik.yaml` is missing, `unikctl` auto-generates a default one during native builds.
+For Python projects where entrypoint detection fails, `unikctl` writes a starter `unik.yaml` template with a `uvicorn` command so you can edit and rerun quickly.
+
 ## Control Plane and Nodes
 
 `unikctl` includes:
