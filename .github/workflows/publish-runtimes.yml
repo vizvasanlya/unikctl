@@ -6,7 +6,7 @@ on:
       source_repo_template:
         description: "Runtime source repository template. Use %s per-runtime, or single monorepo URL."
         required: false
-        default: "https://github.com/vizvasanlya/unikctl-runtime-%s.git"
+        default: "."
       target_prefix:
         description: "Target runtime registry prefix"
         required: false
@@ -50,23 +50,23 @@ on:
       base_subdir:
         description: "Runtime source subdirectory for base (monorepo mode)"
         required: false
-        default: "."
+        default: "runtimes/base"
       nodejs_subdir:
         description: "Runtime source subdirectory for nodejs (monorepo mode)"
         required: false
-        default: "."
+        default: "runtimes/nodejs"
       python_subdir:
         description: "Runtime source subdirectory for python (monorepo mode)"
         required: false
-        default: "."
+        default: "runtimes/python"
       java_subdir:
         description: "Runtime source subdirectory for java (monorepo mode)"
         required: false
-        default: "."
+        default: "runtimes/java"
       dotnet_subdir:
         description: "Runtime source subdirectory for dotnet (monorepo mode)"
         required: false
-        default: "."
+        default: "runtimes/dotnet"
       tags:
         description: "Comma-separated tags"
         required: false

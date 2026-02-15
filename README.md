@@ -84,8 +84,17 @@ Digest lock file used by runtime resolution:
 Runtime source layout options:
 - Multi-repo: one runtime source repo per image (`base`, `nodejs`, `python`, `java`, `dotnet`)
 - Monorepo: one repo with per-runtime subdirs, and set workflow inputs:
-  - `source_repo_template=https://github.com/<org>/<repo>.git`
+  - `source_repo_template=.`
   - `base_subdir`, `nodejs_subdir`, `python_subdir`, `java_subdir`, `dotnet_subdir`
+
+This repository ships default monorepo runtime sources at:
+- `runtimes/base`
+- `runtimes/nodejs`
+- `runtimes/python`
+- `runtimes/java`
+- `runtimes/dotnet`
+
+Runtime source projects can use `unik.yaml`; `Kraftfile` generation is handled internally by the runtime builder.
 
 ## Native Source Pipeline
 

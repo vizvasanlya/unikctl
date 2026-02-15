@@ -11,15 +11,15 @@ set -euo pipefail
 #   ARCH=x86_64
 #   PLAT=qemu
 #   APPLY_BANNER_PATCH=true
-#   SOURCE_REPO_TEMPLATE=https://github.com/vizvasanlya/unikctl-runtime-%s.git
-#   (or a single repo URL such as https://github.com/vizvasanlya/unikctl-runtime.git)
+#   SOURCE_REPO_TEMPLATE=.
+#   (or https://github.com/vizvasanlya/unikctl-runtime-%s.git)
 #   SOURCE_REF=main
 #   GIT_AUTH_TOKEN=<token for private github runtime repos>
 #
 # Per-runtime override env vars:
 #   RUNTIME_<NAME>_REPO
 #   RUNTIME_<NAME>_REF
-#   RUNTIME_<NAME>_SUBDIR
+#   RUNTIME_<NAME>_SUBDIR (default: runtimes/<name>)
 #
 # Example:
 #   RUNTIME_BASE_REPO=https://github.com/vizvasanlya/unikctl-runtime-base.git \
@@ -34,7 +34,7 @@ ARCH="${ARCH:-x86_64}"
 PLAT="${PLAT:-qemu}"
 APPLY_BANNER_PATCH="${APPLY_BANNER_PATCH:-true}"
 BANNER_PATCH_FILE="${BANNER_PATCH_FILE:-}"
-SOURCE_REPO_TEMPLATE="${SOURCE_REPO_TEMPLATE:-https://github.com/vizvasanlya/unikctl-runtime-%s.git}"
+SOURCE_REPO_TEMPLATE="${SOURCE_REPO_TEMPLATE:-.}"
 SOURCE_REF="${SOURCE_REF:-main}"
 
 need_cmd() {
@@ -76,7 +76,7 @@ for runtime in "${RUNTIME_LIST[@]}"; do
   default_repo="$(printf "$SOURCE_REPO_TEMPLATE" "$runtime")"
   repo="${!repo_var:-$default_repo}"
   ref="${!ref_var:-$SOURCE_REF}"
-  subdir="${!subdir_var:-.}"
+  subdir="${!subdir_var:-runtimes/${runtime}}"
 
   src_dir="${TMP_DIR}/${runtime}"
   echo "==> runtime=${runtime}"
@@ -89,9 +89,17 @@ for runtime in "${RUNTIME_LIST[@]}"; do
   fi
 
   if ! git clone --depth 1 --branch "$ref" "$clone_repo" "$src_dir"; then
-    echo "error: failed to clone runtime repo '${repo}' at ref '${ref}'" >&2
-    echo "hint: if repo is private, provide GIT_AUTH_TOKEN (PAT with repo read access)" >&2
-    exit 1
+    if [ "$repo" = "." ] || [ -d "$repo/.git" ]; then
+      # Local repository sources can be in detached HEAD state in CI.
+      if ! git clone --depth 1 "$clone_repo" "$src_dir"; then
+        echo "error: failed to clone local runtime repo source '${repo}'" >&2
+        exit 1
+      fi
+    else
+      echo "error: failed to clone runtime repo '${repo}' at ref '${ref}'" >&2
+      echo "hint: if repo is private, provide GIT_AUTH_TOKEN (PAT with repo read access)" >&2
+      exit 1
+    fi
   fi
 
   if [ "$APPLY_BANNER_PATCH" = "true" ]; then

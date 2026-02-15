@@ -1,0 +1,5 @@
+version: v1
+runtime: ghcr.io/vizvasanlya/unikctl/base:latest
+rootfs:
+  source: Dockerfile
+  type: cpio
