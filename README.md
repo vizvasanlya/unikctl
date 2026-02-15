@@ -70,10 +70,16 @@ unikctl build --debug
 Default namespace used by this repository:
 - `ghcr.io/vizvasanlya/unikctl`
 
-You can publish runtime images with:
+You can build and publish runtimes from source (not mirroring) with:
 ```sh
-./scripts/publish-runtimes.sh
+./scripts/build-runtimes-from-source.sh
 ```
+
+GitHub Actions workflow for source builds:
+- `.github/workflows/build-runtimes.yml`
+
+Digest lock file used by runtime resolution:
+- `internal/runtimeutil/runtime-lock.json`
 
 ## Native Source Pipeline
 

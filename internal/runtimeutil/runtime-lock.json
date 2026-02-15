@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "runtimes": {
+    "base": {
+      "reference": "ghcr.io/vizvasanlya/unikctl/base",
+      "tag": "latest",
+      "digest": "sha256:f2209f5eb8b6cba1481589bc6f68e0edddda52fa2d31118c2ce902fe0c1e33a3"
+    },
+    "nodejs": {
+      "reference": "ghcr.io/vizvasanlya/unikctl/nodejs",
+      "tag": "latest",
+      "digest": ""
+    },
+    "python": {
+      "reference": "ghcr.io/vizvasanlya/unikctl/python",
+      "tag": "latest",
+      "digest": ""
+    },
+    "java": {
+      "reference": "ghcr.io/vizvasanlya/unikctl/java",
+      "tag": "latest",
+      "digest": ""
+    },
+    "dotnet": {
+      "reference": "ghcr.io/vizvasanlya/unikctl/dotnet",
+      "tag": "latest",
+      "digest": ""
+    }
+  }
+}

@@ -1,20 +1,20 @@
-name: publish-runtimes
+name: build-runtimes
 
 on:
   workflow_dispatch:
     inputs:
-      source_repo_template:
-        description: "Source repository template (use %s for runtime name)"
+      tag:
+        description: "Runtime tag to publish"
         required: false
-        default: "https://github.com/vizvasanlya/unikctl-runtime-%s.git"
+        default: "latest"
       target_prefix:
         description: "Target runtime registry prefix"
         required: false
         default: "ghcr.io/vizvasanlya/unikctl"
-      source_ref:
-        description: "Default source git ref"
+      runtimes:
+        description: "Comma-separated runtimes to build"
         required: false
-        default: "main"
+        default: "base,nodejs,python,java,dotnet"
       arch:
         description: "Runtime build architecture"
         required: false
@@ -23,10 +23,14 @@ on:
         description: "Runtime build platform"
         required: false
         default: "qemu"
-      images:
-        description: "Comma-separated images"
+      source_ref:
+        description: "Default source git ref"
         required: false
-        default: "base,nodejs,python,java,dotnet"
+        default: "main"
+      source_repo_template:
+        description: "Default source repository template (use %s for runtime name)"
+        required: false
+        default: "https://github.com/vizvasanlya/unikctl-runtime-%s.git"
       base_repo:
         description: "Override source repository for base runtime"
         required: false
@@ -47,10 +51,10 @@ on:
         description: "Override source repository for dotnet runtime"
         required: false
         default: ""
-      tags:
-        description: "Comma-separated tags"
+      update_lockfile:
+        description: "Commit updated runtime lockfile back to branch"
         required: false
-        default: "latest"
+        default: "false"
       apply_banner_patch:
         description: "Patch runtime source branding before build"
         required: false
@@ -65,8 +69,9 @@ permissions:
   packages: write
 
 jobs:
-  source-build:
+  build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -79,23 +84,22 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to GHCR
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build runtime images from source
+      - name: Build and push runtimes from source
         env:
-          SOURCE_REPO_TEMPLATE: ${{ inputs.source_repo_template }}
           TARGET_PREFIX: ${{ inputs.target_prefix }}
-          SOURCE_REF: ${{ inputs.source_ref }}
+          TAG: ${{ inputs.tag }}
+          RUNTIMES: ${{ inputs.runtimes }}
           ARCH: ${{ inputs.arch }}
           PLAT: ${{ inputs.plat }}
-          RUNTIMES: ${{ inputs.images }}
-          TAGS: ${{ inputs.tags }}
-          LOCK_TAG: ${{ inputs.tags }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          SOURCE_REPO_TEMPLATE: ${{ inputs.source_repo_template }}
           APPLY_BANNER_PATCH: ${{ inputs.apply_banner_patch }}
           BANNER_PATCH_FILE: ${{ inputs.banner_patch_file }}
           RUNTIME_BASE_REPO: ${{ inputs.base_repo }}
@@ -104,12 +108,31 @@ jobs:
           RUNTIME_JAVA_REPO: ${{ inputs.java_repo }}
           RUNTIME_DOTNET_REPO: ${{ inputs.dotnet_repo }}
         run: |
-          chmod +x scripts/build-runtimes-from-source.sh scripts/patch-runtime-banner.sh scripts/generate-runtime-lock.sh
+          chmod +x scripts/build-runtimes-from-source.sh scripts/patch-runtime-banner.sh
           ./scripts/build-runtimes-from-source.sh
+
+      - name: Generate runtime lock file
+        env:
+          TARGET_PREFIX: ${{ inputs.target_prefix }}
+          TAG: ${{ inputs.tag }}
+          RUNTIMES: ${{ inputs.runtimes }}
+          OUTPUT: internal/runtimeutil/runtime-lock.json
+        run: |
+          chmod +x scripts/generate-runtime-lock.sh
           ./scripts/generate-runtime-lock.sh
+          cat internal/runtimeutil/runtime-lock.json
 
       - name: Upload runtime lock file
         uses: actions/upload-artifact@v4
         with:
           name: runtime-lock
           path: internal/runtimeutil/runtime-lock.json
+
+      - name: Commit runtime lock file
+        if: ${{ inputs.update_lockfile == 'true' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add internal/runtimeutil/runtime-lock.json
+          git commit -m "Update runtime lockfile for ${{ inputs.tag }}" || exit 0
+          git push

@@ -33,6 +33,25 @@ var aliases = map[string]string{
 type Reference struct {
 	Name    string
 	Version string
+	Digest  string
+}
+
+func (ref Reference) String() string {
+	name := strings.TrimSpace(ref.Name)
+	if name == "" {
+		return ""
+	}
+
+	digest := strings.TrimSpace(ref.Digest)
+	version := strings.TrimSpace(ref.Version)
+	if digest != "" {
+		return fmt.Sprintf("%s@%s", name, digest)
+	}
+	if version != "" {
+		return fmt.Sprintf("%s:%s", name, version)
+	}
+
+	return name
 }
 
 func Parse(reference string) Reference {
@@ -41,16 +60,25 @@ func Parse(reference string) Reference {
 		return Reference{}
 	}
 
+	digest := ""
+	lastAt := strings.LastIndex(reference, "@")
+	lastSlashAtDigest := strings.LastIndex(reference, "/")
+	if lastAt > lastSlashAtDigest {
+		digest = strings.TrimSpace(reference[lastAt+1:])
+		reference = strings.TrimSpace(reference[:lastAt])
+	}
+
 	lastSlash := strings.LastIndex(reference, "/")
 	lastColon := strings.LastIndex(reference, ":")
 	if lastColon > lastSlash {
 		return Reference{
 			Name:    strings.TrimSpace(reference[:lastColon]),
 			Version: strings.TrimSpace(reference[lastColon+1:]),
+			Digest:  digest,
 		}
 	}
 
-	return Reference{Name: reference}
+	return Reference{Name: reference, Digest: digest}
 }
 
 func NormalizeName(name string) string {
@@ -78,16 +106,22 @@ func Normalize(reference, defaultVersion string) string {
 	}
 
 	name := NormalizeName(ref.Name)
+	if ref.Digest != "" {
+		return Reference{
+			Name:   name,
+			Digest: ref.Digest,
+		}.String()
+	}
+
 	version := strings.TrimSpace(ref.Version)
 	if version == "" {
 		version = strings.TrimSpace(defaultVersion)
 	}
 
-	if version == "" {
-		return name
-	}
-
-	return fmt.Sprintf("%s:%s", name, version)
+	return Reference{
+		Name:    name,
+		Version: version,
+	}.String()
 }
 
 func Candidates(reference, defaultVersion string) []Reference {
@@ -108,10 +142,11 @@ func Candidates(reference, defaultVersion string) []Reference {
 	appendUnique := func(candidate Reference) {
 		candidate.Name = strings.TrimSpace(candidate.Name)
 		candidate.Version = strings.TrimSpace(candidate.Version)
+		candidate.Digest = strings.TrimSpace(candidate.Digest)
 		if candidate.Name == "" {
 			return
 		}
-		key := candidate.Name + "::" + candidate.Version
+		key := candidate.String()
 		if _, exists := seen[key]; exists {
 			return
 		}
@@ -119,11 +154,15 @@ func Candidates(reference, defaultVersion string) []Reference {
 		candidates = append(candidates, candidate)
 	}
 
+	if locked, ok := lockedReferenceFor(normalized.Name, normalized.Version); ok {
+		appendUnique(locked)
+	}
+
 	appendUnique(normalized)
 	appendUnique(raw)
 
 	// Allow fallback to namespace-qualified and short names.
-	if strings.HasPrefix(normalized.Name, RuntimeRegistryPrefix+"/") {
+	if normalized.Digest == "" && strings.HasPrefix(normalized.Name, RuntimeRegistryPrefix+"/") {
 		short := strings.TrimPrefix(normalized.Name, RuntimeRegistryPrefix+"/")
 		appendUnique(Reference{
 			Name:    RuntimeRegistryNamespace + "/" + short,

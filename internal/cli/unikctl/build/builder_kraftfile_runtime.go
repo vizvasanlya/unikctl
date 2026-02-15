@@ -173,8 +173,12 @@ func queryRuntimeCandidates(
 	var queryErr error
 	for _, candidate := range candidates {
 		options := append([]packmanager.QueryOption{}, qopts...)
-		options = append(options, packmanager.WithName(candidate.Name))
-		if candidate.Version != "" {
+		queryName := candidate.Name
+		if candidate.Digest != "" {
+			queryName = fmt.Sprintf("%s@%s", candidate.Name, candidate.Digest)
+		}
+		options = append(options, packmanager.WithName(queryName))
+		if candidate.Digest == "" && candidate.Version != "" {
 			options = append(options, packmanager.WithVersion(candidate.Version))
 		}
 
@@ -230,13 +234,11 @@ func joinRuntimeCandidates(candidates []runtimeutil.Reference) string {
 }
 
 func formatRuntimeReference(candidate runtimeutil.Reference) string {
-	if candidate.Name == "" {
+	value := candidate.String()
+	if value == "" {
 		return "-"
 	}
-	if candidate.Version == "" {
-		return candidate.Name
-	}
-	return fmt.Sprintf("%s:%s", candidate.Name, candidate.Version)
+	return value
 }
 
 func (*builderKraftfileRuntime) Build(_ context.Context, _ *BuildOptions, _ ...string) error {
