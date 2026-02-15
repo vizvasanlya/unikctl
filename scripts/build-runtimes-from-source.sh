@@ -13,6 +13,7 @@ set -euo pipefail
 #   APPLY_BANNER_PATCH=true
 #   SOURCE_REPO_TEMPLATE=https://github.com/vizvasanlya/unikctl-runtime-%s.git
 #   SOURCE_REF=main
+#   GIT_AUTH_TOKEN=<token for private github runtime repos>
 #
 # Per-runtime override env vars:
 #   RUNTIME_<NAME>_REPO
@@ -81,7 +82,16 @@ for runtime in "${RUNTIME_LIST[@]}"; do
   echo "    repo=${repo}"
   echo "    ref=${ref}"
 
-  git clone --depth 1 --branch "$ref" "$repo" "$src_dir"
+  clone_repo="$repo"
+  if [[ "$repo" =~ ^https://github.com/ ]] && [[ "$repo" != *"@"* ]] && [ -n "${GIT_AUTH_TOKEN:-}" ]; then
+    clone_repo="${repo/https:\/\/github.com\//https:\/\/x-access-token:${GIT_AUTH_TOKEN}@github.com\/}"
+  fi
+
+  if ! git clone --depth 1 --branch "$ref" "$clone_repo" "$src_dir"; then
+    echo "error: failed to clone runtime repo '${repo}' at ref '${ref}'" >&2
+    echo "hint: if repo is private, provide GIT_AUTH_TOKEN (PAT with repo read access)" >&2
+    exit 1
+  fi
 
   if [ "$APPLY_BANNER_PATCH" = "true" ]; then
     "${ROOT_DIR}/scripts/patch-runtime-banner.sh" "$src_dir"

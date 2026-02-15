@@ -3,45 +3,37 @@ name: release/staging
 on:
   push:
     branches: [staging]
+  workflow_dispatch:
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 jobs:
-  goreleaser:
+  build-snapshot:
     runs-on: ubuntu-latest
-    container: unikctl.sh/myself-full:latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: recursive
 
-      - name: Fetch all tags
-        run: |
-          git config --global --add safe.directory /__w/kraftkit/kraftkit
-          git fetch --force --tags
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
 
-      - name: Generate GoReleaser configuration
-        run: |
-          ytt -f .goreleaser-staging.yaml > goreleaser-staging.yaml
+      - name: Set up ytt
+        run: go install carvel.dev/ytt/cmd/ytt@v0.51.0
 
-      - name: Run GoReleaser
+      - name: Render GoReleaser config
         run: |
-          git tag -d "$(git describe)" || true
-          git config user.name "Unikraft Bot"
-          git config user.email "monkey@unikraft.io"
-          git tag -a "$(git describe)" -m "Pre-release: $(git describe)"
-          echo "$GOOGLE_APPLICATION_JSON" > /tmp/gs.json
-          goreleaser build \
-            --config goreleaser-staging.yaml \
-            --skip=validate
-          goreleaser release \
-            --config goreleaser-staging.yaml \
-            --clean \
-            --skip=validate
+          "$(go env GOPATH)/bin/ytt" -f .goreleaser-staging.yaml > goreleaser-staging.yaml
+
+      - name: Build snapshot
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean --config goreleaser-staging.yaml
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
-          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

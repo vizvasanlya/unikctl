@@ -107,8 +107,11 @@ jobs:
           RUNTIME_PYTHON_REPO: ${{ inputs.python_repo }}
           RUNTIME_JAVA_REPO: ${{ inputs.java_repo }}
           RUNTIME_DOTNET_REPO: ${{ inputs.dotnet_repo }}
+          RUNTIME_REPO_TOKEN: ${{ secrets.RUNTIME_REPO_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           chmod +x scripts/build-runtimes-from-source.sh scripts/patch-runtime-banner.sh
+          export GIT_AUTH_TOKEN="${RUNTIME_REPO_TOKEN:-$GITHUB_TOKEN}"
           ./scripts/build-runtimes-from-source.sh
 
       - name: Generate runtime lock file
