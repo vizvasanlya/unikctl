@@ -307,8 +307,9 @@ func (*goPack) Detect(workdir string) bool {
 func (*goPack) Build(ctx context.Context, opts *BuildOptions, workdir, rootfsDir string, _ *nativeProjectConfig) (*nativeBuildResult, error) {
 	output := filepath.Join(rootfsDir, "app", "app")
 	env := map[string]string{
-		"GOOS":   "linux",
-		"GOARCH": normalizeGoArch(opts.Architecture),
+		"GOOS":         "linux",
+		"GOARCH":       normalizeGoArch(opts.Architecture),
+		"CGO_ENABLED":  "0",
 	}
 
 	args := []string{"build", "-trimpath"}
@@ -1092,8 +1093,9 @@ func buildStaticHTTPServerBinary(ctx context.Context, opts *BuildOptions, output
 
 	goarch := normalizeGoArch(opts.Architecture)
 	env := map[string]string{
-		"GOOS":   "linux",
-		"GOARCH": goarch,
+		"GOOS":         "linux",
+		"GOARCH":       goarch,
+		"CGO_ENABLED":  "0",
 	}
 
 	args := []string{"build", "-trimpath"}
