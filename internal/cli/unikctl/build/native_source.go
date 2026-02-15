@@ -698,11 +698,11 @@ func runCommand(ctx context.Context, opts *BuildOptions, dir string, env map[str
 	cmd.Env = os.Environ()
 
 	for k, v := range toolCacheEnv(opts, name) {
-		cmd.Env = append(cmd.Env, k+"="+v)
+		cmd.Env = upsertEnv(cmd.Env, k, v)
 	}
 
 	for k, v := range env {
-		cmd.Env = append(cmd.Env, k+"="+v)
+		cmd.Env = upsertEnv(cmd.Env, k, v)
 	}
 
 	stdoutPipe, err := cmd.StdoutPipe()
@@ -833,6 +833,19 @@ func runCommand(ctx context.Context, opts *BuildOptions, dir string, env map[str
 	}).Info("completed")
 
 	return nil
+}
+
+func upsertEnv(env []string, key, value string) []string {
+	prefix := key + "="
+	entry := prefix + value
+	for i, current := range env {
+		if strings.HasPrefix(current, prefix) {
+			env[i] = entry
+			return env
+		}
+	}
+
+	return append(env, entry)
 }
 
 func runShellCommand(ctx context.Context, opts *BuildOptions, dir, script string, env map[string]string) error {
