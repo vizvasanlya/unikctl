@@ -312,6 +312,7 @@ func (*goPack) Build(ctx context.Context, opts *BuildOptions, workdir, rootfsDir
 	}
 
 	args := []string{"build", "-trimpath"}
+	args = append(args, "-buildmode=pie")
 	if isDebugBuild(opts) {
 		args = append(args, "-gcflags", "all=-N -l")
 	} else {
@@ -1096,6 +1097,7 @@ func buildStaticHTTPServerBinary(ctx context.Context, opts *BuildOptions, output
 	}
 
 	args := []string{"build", "-trimpath"}
+	args = append(args, "-buildmode=pie")
 	if isDebugBuild(opts) {
 		args = append(args, "-gcflags", "all=-N -l")
 	} else {
