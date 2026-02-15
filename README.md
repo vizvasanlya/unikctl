@@ -81,6 +81,12 @@ GitHub Actions workflow for source builds:
 Digest lock file used by runtime resolution:
 - `internal/runtimeutil/runtime-lock.json`
 
+Runtime source layout options:
+- Multi-repo: one runtime source repo per image (`base`, `nodejs`, `python`, `java`, `dotnet`)
+- Monorepo: one repo with per-runtime subdirs, and set workflow inputs:
+  - `source_repo_template=https://github.com/<org>/<repo>.git`
+  - `base_subdir`, `nodejs_subdir`, `python_subdir`, `java_subdir`, `dotnet_subdir`
+
 ## Native Source Pipeline
 
 For source-first projects (without a `Kraftfile`), `unikctl` detects the project type and builds a native rootfs pipeline automatically.

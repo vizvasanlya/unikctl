@@ -28,7 +28,7 @@ on:
         required: false
         default: "main"
       source_repo_template:
-        description: "Default source repository template (use %s for runtime name)"
+        description: "Runtime source repository template. Use %s per-runtime, or single monorepo URL."
         required: false
         default: "https://github.com/vizvasanlya/unikctl-runtime-%s.git"
       base_repo:
@@ -51,6 +51,26 @@ on:
         description: "Override source repository for dotnet runtime"
         required: false
         default: ""
+      base_subdir:
+        description: "Runtime source subdirectory for base (monorepo mode)"
+        required: false
+        default: "."
+      nodejs_subdir:
+        description: "Runtime source subdirectory for nodejs (monorepo mode)"
+        required: false
+        default: "."
+      python_subdir:
+        description: "Runtime source subdirectory for python (monorepo mode)"
+        required: false
+        default: "."
+      java_subdir:
+        description: "Runtime source subdirectory for java (monorepo mode)"
+        required: false
+        default: "."
+      dotnet_subdir:
+        description: "Runtime source subdirectory for dotnet (monorepo mode)"
+        required: false
+        default: "."
       update_lockfile:
         description: "Commit updated runtime lockfile back to branch"
         required: false
@@ -107,6 +127,11 @@ jobs:
           RUNTIME_PYTHON_REPO: ${{ inputs.python_repo }}
           RUNTIME_JAVA_REPO: ${{ inputs.java_repo }}
           RUNTIME_DOTNET_REPO: ${{ inputs.dotnet_repo }}
+          RUNTIME_BASE_SUBDIR: ${{ inputs.base_subdir }}
+          RUNTIME_NODEJS_SUBDIR: ${{ inputs.nodejs_subdir }}
+          RUNTIME_PYTHON_SUBDIR: ${{ inputs.python_subdir }}
+          RUNTIME_JAVA_SUBDIR: ${{ inputs.java_subdir }}
+          RUNTIME_DOTNET_SUBDIR: ${{ inputs.dotnet_subdir }}
           RUNTIME_REPO_TOKEN: ${{ secrets.RUNTIME_REPO_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

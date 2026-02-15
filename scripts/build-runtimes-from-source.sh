@@ -12,6 +12,7 @@ set -euo pipefail
 #   PLAT=qemu
 #   APPLY_BANNER_PATCH=true
 #   SOURCE_REPO_TEMPLATE=https://github.com/vizvasanlya/unikctl-runtime-%s.git
+#   (or a single repo URL such as https://github.com/vizvasanlya/unikctl-runtime.git)
 #   SOURCE_REF=main
 #   GIT_AUTH_TOKEN=<token for private github runtime repos>
 #
@@ -100,6 +101,7 @@ for runtime in "${RUNTIME_LIST[@]}"; do
   workdir="${src_dir}/${subdir}"
   if [ ! -d "$workdir" ]; then
     echo "error: runtime workdir not found: $workdir" >&2
+    echo "hint: set ${subdir_var} or arrange runtime sources in one repo, e.g. runtimes/${runtime}" >&2
     exit 1
   fi
 
