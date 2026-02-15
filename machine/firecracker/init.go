@@ -29,7 +29,17 @@ func registerLegacyGobAlias(v any) {
 		return
 	}
 
-	gob.RegisterName(legacyPath+"."+t.Name(), v)
+	safeRegisterLegacyName(legacyPath+"."+t.Name(), v)
+}
+
+func safeRegisterLegacyName(name string, v any) {
+	defer func() {
+		if recover() != nil {
+			// Ignore duplicate gob-name registration from mixed legacy/new package paths.
+		}
+	}()
+
+	gob.RegisterName(name, v)
 }
 
 func init() {
