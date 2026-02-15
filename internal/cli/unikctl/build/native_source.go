@@ -6,6 +6,7 @@ package build
 import (
 	"bufio"
 	"bytes"
+	"debug/elf"
 	"context"
 	"encoding/json"
 	"errors"
@@ -324,6 +325,9 @@ func (*goPack) Build(ctx context.Context, opts *BuildOptions, workdir, rootfsDir
 	if err := runCommand(ctx, opts, workdir, env, "go", args...); err != nil {
 		return nil, err
 	}
+	if err := stageELFInterpreter(output, rootfsDir); err != nil {
+		return nil, err
+	}
 
 	return &nativeBuildResult{
 		Runtime: runtimeutil.DefaultRuntime,
@@ -427,7 +431,7 @@ func (*nodePack) Build(ctx context.Context, opts *BuildOptions, workdir, rootfsD
 			}
 
 			serverBin := filepath.Join(rootfsDir, "app", "app")
-			if err := buildStaticHTTPServerBinary(ctx, opts, serverBin); err != nil {
+			if err := buildStaticHTTPServerBinary(ctx, opts, rootfsDir, serverBin); err != nil {
 				return nil, err
 			}
 
@@ -1092,7 +1096,7 @@ func detectNodeStaticOutput(appDir string, manifest *nodePackageManifest) (strin
 	return "", false
 }
 
-func buildStaticHTTPServerBinary(ctx context.Context, opts *BuildOptions, outputPath string) error {
+func buildStaticHTTPServerBinary(ctx context.Context, opts *BuildOptions, rootfsDir, outputPath string) error {
 	sourceDir := filepath.Join(filepath.Dir(outputPath), ".unikctl-static-server")
 	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
 		return fmt.Errorf("creating static server build dir: %w", err)
@@ -1123,8 +1127,75 @@ func buildStaticHTTPServerBinary(ctx context.Context, opts *BuildOptions, output
 	if err := runCommand(ctx, opts, sourceDir, env, "go", args...); err != nil {
 		return fmt.Errorf("building static HTTP server binary: %w", err)
 	}
+	if err := stageELFInterpreter(outputPath, rootfsDir); err != nil {
+		return err
+	}
 
 	return nil
+}
+
+func stageELFInterpreter(binaryPath, rootfsDir string) error {
+	interp, err := readELFInterpreter(binaryPath)
+	if err != nil {
+		return nil
+	}
+	if interp == "" || !strings.HasPrefix(interp, "/") {
+		return nil
+	}
+
+	hostInterp := firstExistingPath(
+		interp,
+		filepath.Join("/lib", filepath.Base(interp)),
+		filepath.Join("/lib64", filepath.Base(interp)),
+		filepath.Join("/lib", "x86_64-linux-gnu", filepath.Base(interp)),
+		filepath.Join("/lib", "aarch64-linux-gnu", filepath.Base(interp)),
+	)
+	if hostInterp == "" {
+		return fmt.Errorf("binary requires ELF interpreter %s but it was not found on build host", interp)
+	}
+
+	dst := filepath.Join(rootfsDir, filepath.FromSlash(strings.TrimPrefix(interp, "/")))
+	if err := copyFile(hostInterp, dst); err != nil {
+		return fmt.Errorf("staging ELF interpreter %s: %w", interp, err)
+	}
+
+	return nil
+}
+
+func readELFInterpreter(path string) (string, error) {
+	f, err := elf.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	for _, prog := range f.Progs {
+		if prog.Type != elf.PT_INTERP {
+			continue
+		}
+
+		r := prog.Open()
+		data, err := io.ReadAll(r)
+		if err != nil {
+			return "", err
+		}
+
+		return strings.TrimRight(string(data), "\x00"), nil
+	}
+
+	return "", nil
+}
+
+func firstExistingPath(paths ...string) string {
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		if fileExists(path) {
+			return path
+		}
+	}
+	return ""
 }
 
 const staticHTTPServerSource = `package main
