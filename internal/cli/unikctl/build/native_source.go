@@ -85,6 +85,7 @@ type nativePipelineResult struct {
 }
 
 type nativePackMetadata struct {
+	LayoutVersion  int       `json:"layout_version"`
 	LanguagePack   string    `json:"language_pack"`
 	BuildMode      string    `json:"build_mode"`
 	Runtime        string    `json:"runtime"`
@@ -93,6 +94,8 @@ type nativePackMetadata struct {
 	Deterministic  bool      `json:"deterministic"`
 	GeneratedAtUTC time.Time `json:"generated_at_utc"`
 }
+
+const nativePipelineLayoutVersion = 2
 
 type nativeLanguagePack interface {
 	Name() string
@@ -214,6 +217,7 @@ func runNativeSourcePipeline(ctx context.Context, opts *BuildOptions) (*nativePi
 	}
 
 	if err := writeNativePackMetadata(filepath.Join(stageDir, "pack-metadata.json"), nativePackMetadata{
+		LayoutVersion:  nativePipelineLayoutVersion,
 		LanguagePack:   pack.Name(),
 		BuildMode:      buildMode(opts),
 		Runtime:        runtimeName,
@@ -373,34 +377,45 @@ func (*nodePack) Detect(workdir string) bool {
 }
 
 func (*nodePack) Build(ctx context.Context, opts *BuildOptions, workdir, rootfsDir string, _ *nativeProjectConfig) (*nativeBuildResult, error) {
-	appDir := filepath.Join(rootfsDir, "app")
-	if err := copyDir(workdir, appDir, map[string]struct{}{
+	buildDir := filepath.Join(filepath.Dir(rootfsDir), "node-build")
+	if err := os.RemoveAll(buildDir); err != nil {
+		return nil, fmt.Errorf("clearing node build dir: %w", err)
+	}
+	if err := os.MkdirAll(buildDir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating node build dir: %w", err)
+	}
+	defer os.RemoveAll(buildDir)
+
+	if err := copyDir(workdir, buildDir, map[string]struct{}{
 		".git":         {},
 		".unikctl":     {},
 		".unikraft":    {},
 		"node_modules": {},
+		"dist":         {},
+		"build":        {},
+		"out":          {},
 	}); err != nil {
 		return nil, fmt.Errorf("copying source tree: %w", err)
 	}
 
-	manifest, err := readNodeManifest(filepath.Join(appDir, "package.json"))
+	manifest, err := readNodeManifest(filepath.Join(buildDir, "package.json"))
 	if err != nil {
 		return nil, err
 	}
 
 	hasBuildScript := strings.TrimSpace(manifest.Scripts["build"]) != ""
-	npmArgs := nodeInstallArgs(appDir, hasBuildScript, isDebugBuild(opts))
+	npmArgs := nodeInstallArgs(buildDir, hasBuildScript, isDebugBuild(opts))
 
-	if err := runCommand(ctx, opts, appDir, nil, "npm", npmArgs...); err != nil {
+	if err := runCommand(ctx, opts, buildDir, nil, "npm", npmArgs...); err != nil {
 		return nil, err
 	}
 
 	if hasBuildScript {
-		if err := runCommand(ctx, opts, appDir, nil, "npm", "run", "build"); err != nil {
+		if err := runCommand(ctx, opts, buildDir, nil, "npm", "run", "build"); err != nil {
 			return nil, err
 		}
 
-		if staticDir, ok := detectNodeStaticOutput(appDir, manifest); ok {
+		if staticDir, ok := detectNodeStaticOutput(buildDir, manifest); ok {
 			wwwDir := filepath.Join(rootfsDir, "app", "www")
 			if err := os.MkdirAll(wwwDir, 0o755); err != nil {
 				return nil, fmt.Errorf("creating static output dir: %w", err)
@@ -419,6 +434,21 @@ func (*nodePack) Build(ctx context.Context, opts *BuildOptions, workdir, rootfsD
 				Command: []string{"/app/app", "--dir", "/app/www", "--addr", ":8080"},
 			}, nil
 		}
+	}
+
+	appDir := filepath.Join(rootfsDir, "app")
+	if err := os.RemoveAll(appDir); err != nil {
+		return nil, fmt.Errorf("clearing node app dir: %w", err)
+	}
+	if err := copyDir(buildDir, appDir, map[string]struct{}{
+		".git":      {},
+		".unikctl":  {},
+		".unikraft": {},
+		"dist":      {},
+		"build":     {},
+		"out":       {},
+	}); err != nil {
+		return nil, fmt.Errorf("copying node app runtime tree: %w", err)
 	}
 
 	mainEntry := manifest.Main
@@ -1511,6 +1541,9 @@ func tryReuseNativePipeline(ctx context.Context, workdir, stageDir, packName, mo
 
 	if strings.TrimSpace(metadata.LanguagePack) != strings.TrimSpace(packName) ||
 		strings.TrimSpace(metadata.BuildMode) != strings.TrimSpace(mode) {
+		return nil, false, nil
+	}
+	if metadata.LayoutVersion != nativePipelineLayoutVersion {
 		return nil, false, nil
 	}
 
