@@ -176,3 +176,39 @@ func Candidates(reference, defaultVersion string) []Reference {
 
 	return candidates
 }
+
+func MissingRuntimeHint(reference string) string {
+	ref := Parse(strings.TrimSpace(reference))
+	if ref.Name == "" {
+		return ""
+	}
+
+	key := lockRuntimeKey(ref.Name)
+	switch key {
+	case "base", "nodejs", "python", "java", "dotnet":
+		return fmt.Sprintf(
+			"hint: runtime image '%s/%s:%s' was not found; publish it first (workflow: build-runtimes/publish-runtimes) or set unik.yaml runtime to an available image",
+			RuntimeRegistryPrefix,
+			key,
+			firstNonEmpty(ref.Version, "latest"),
+		)
+	}
+
+	if strings.HasPrefix(ref.Name, RuntimeRegistryPrefix+"/") {
+		return fmt.Sprintf(
+			"hint: ensure '%s' is published and accessible in GHCR (docker login ghcr.io may be required)",
+			ref.String(),
+		)
+	}
+
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}

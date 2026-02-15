@@ -113,34 +113,41 @@ func (*builderKraftfileRuntime) Prepare(ctx context.Context, opts *BuildOptions,
 
 	if len(packs) == 0 {
 		tried := joinRuntimeCandidates(candidates)
+		hint := runtimeutil.MissingRuntimeHint(composeRuntimeRef(name, version))
+		withHint := func(message string) error {
+			if hint == "" {
+				return fmt.Errorf("%s", message)
+			}
+			return fmt.Errorf("%s (%s)", message, hint)
+		}
 		if len(opts.Platform) > 0 && len(opts.Architecture) > 0 {
-			return fmt.Errorf(
+			return withHint(fmt.Sprintf(
 				"could not find runtime '%s' (%s/%s); tried: %s",
 				opts.Project.Runtime().Name(),
 				opts.Platform,
 				opts.Architecture,
 				tried,
-			)
+			))
 		} else if len(opts.Architecture) > 0 {
-			return fmt.Errorf(
+			return withHint(fmt.Sprintf(
 				"could not find runtime '%s' with '%s' architecture; tried: %s",
 				opts.Project.Runtime().Name(),
 				opts.Architecture,
 				tried,
-			)
+			))
 		} else if len(opts.Platform) > 0 {
-			return fmt.Errorf(
+			return withHint(fmt.Sprintf(
 				"could not find runtime '%s' with '%s' platform; tried: %s",
 				opts.Project.Runtime().Name(),
 				opts.Platform,
 				tried,
-			)
+			))
 		} else {
-			return fmt.Errorf(
+			return withHint(fmt.Sprintf(
 				"could not find runtime %s; tried: %s",
 				opts.Project.Runtime().Name(),
 				tried,
-			)
+			))
 		}
 	} else if len(packs) == 1 {
 		selected = &packs[0]
