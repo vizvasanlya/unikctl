@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/containerd/nerdctl/v2/pkg/strutil"
@@ -29,6 +31,12 @@ import (
 
 // Are we publishing ports? E.g. -p/--ports=127.0.0.1:80:8080/tcp ...
 func (opts *RunOptions) assignPorts(ctx context.Context, machine *machineapi.Machine) error {
+	autoAssigned := false
+	if len(opts.Ports) == 0 {
+		opts.Ports = inferAutoPublishPorts(machine)
+		autoAssigned = len(opts.Ports) > 0
+	}
+
 	if len(opts.Ports) == 0 {
 		return nil
 	}
@@ -42,7 +50,202 @@ func (opts *RunOptions) assignPorts(ctx context.Context, machine *machineapi.Mac
 		machine.Spec.Ports = append(machine.Spec.Ports, parsed...)
 	}
 
+	if autoAssigned {
+		log.G(ctx).WithField("ports", strings.Join(opts.Ports, ",")).Info("auto-published detected service port")
+	}
+
 	return utils.CheckPorts(ctx, opts.machineController, machine)
+}
+
+func inferAutoPublishPorts(machine *machineapi.Machine) []string {
+	if machine == nil {
+		return nil
+	}
+	if len(machine.Spec.Ports) > 0 {
+		return nil
+	}
+
+	ports := detectServicePortsFromArgs(machine.Spec.ApplicationArgs)
+	if len(ports) == 0 && looksLikeStaticHTTPServer(machine.Spec.ApplicationArgs) {
+		ports = append(ports, 8080)
+	}
+
+	seen := map[int]struct{}{}
+	mappings := []string{}
+	for _, port := range ports {
+		if port <= 0 || port > 65535 {
+			continue
+		}
+		if _, ok := seen[port]; ok {
+			continue
+		}
+		seen[port] = struct{}{}
+		mappings = append(mappings, fmt.Sprintf("127.0.0.1:%d:%d/tcp", port, port))
+	}
+
+	return mappings
+}
+
+func detectServicePortsFromArgs(args []string) []int {
+	ports := []int{}
+
+	for i := 0; i < len(args); i++ {
+		current := strings.TrimSpace(args[i])
+		if current == "" {
+			continue
+		}
+
+		switch current {
+		case "--addr", "-addr", "--listen", "-listen", "--port", "-p":
+			if i+1 < len(args) {
+				if port, ok := parsePotentialPort(args[i+1]); ok {
+					ports = append(ports, port)
+				}
+			}
+			continue
+		}
+
+		for _, prefix := range []string{"--addr=", "--listen=", "--port="} {
+			if strings.HasPrefix(current, prefix) {
+				if port, ok := parsePotentialPort(strings.TrimPrefix(current, prefix)); ok {
+					ports = append(ports, port)
+				}
+				break
+			}
+		}
+	}
+
+	return ports
+}
+
+func parsePotentialPort(value string) (int, bool) {
+	value = strings.TrimSpace(strings.Trim(value, "\"'"))
+	if value == "" {
+		return 0, false
+	}
+
+	if strings.Contains(value, "://") {
+		if parsed, err := url.Parse(value); err == nil {
+			value = strings.TrimSpace(parsed.Host)
+		}
+	}
+
+	if strings.HasPrefix(value, ":") {
+		if port, err := strconv.Atoi(strings.TrimPrefix(value, ":")); err == nil {
+			return port, true
+		}
+	}
+
+	if host, portStr, err := net.SplitHostPort(value); err == nil {
+		_ = host
+		if port, err := strconv.Atoi(strings.TrimSpace(portStr)); err == nil {
+			return port, true
+		}
+	}
+
+	if port, err := strconv.Atoi(value); err == nil {
+		return port, true
+	}
+
+	return 0, false
+}
+
+func looksLikeStaticHTTPServer(args []string) bool {
+	hasAppBinary := false
+	hasDirFlag := false
+	hasStaticDir := false
+
+	for _, arg := range args {
+		value := strings.TrimSpace(arg)
+		if value == "/app/app" {
+			hasAppBinary = true
+		}
+		if value == "--dir" || strings.HasPrefix(value, "--dir=") {
+			hasDirFlag = true
+		}
+		if value == "/app/www" || strings.Contains(value, "/app/www") {
+			hasStaticDir = true
+		}
+	}
+
+	return hasAppBinary && hasDirFlag && hasStaticDir
+}
+
+func launchURLFromMachinePorts(ports machineapi.MachinePorts, fallbackHost string) string {
+	bestIndex := -1
+	bestScore := 1 << 30
+
+	for index, candidate := range ports {
+		hostPort := int(candidate.HostPort)
+		if hostPort <= 0 {
+			continue
+		}
+
+		protocol := strings.ToLower(strings.TrimSpace(string(candidate.Protocol)))
+		if protocol != "" && protocol != "tcp" {
+			continue
+		}
+
+		score := hostPort + 1000
+		switch hostPort {
+		case 443:
+			score = 0
+		case 80:
+			score = 1
+		case 8080:
+			score = 2
+		case 3000:
+			score = 3
+		case 5173:
+			score = 4
+		case 5000:
+			score = 5
+		}
+
+		if score < bestScore {
+			bestScore = score
+			bestIndex = index
+		}
+	}
+
+	if bestIndex < 0 {
+		return ""
+	}
+
+	selected := ports[bestIndex]
+	host := normalizeLaunchHost(selected.HostIP, fallbackHost)
+	if host == "" {
+		host = "127.0.0.1"
+	}
+
+	hostPort := int(selected.HostPort)
+	machinePort := int(selected.MachinePort)
+	scheme := "http"
+	if hostPort == 443 || machinePort == 443 {
+		scheme = "https"
+	}
+
+	if (scheme == "http" && hostPort == 80) || (scheme == "https" && hostPort == 443) {
+		return fmt.Sprintf("%s://%s", scheme, host)
+	}
+
+	return fmt.Sprintf("%s://%s:%d", scheme, host, hostPort)
+}
+
+func normalizeLaunchHost(host, fallbackHost string) string {
+	host = strings.TrimSpace(host)
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		host = strings.TrimSpace(fallbackHost)
+	}
+	if host == "" {
+		return ""
+	}
+
+	if parsed := net.ParseIP(strings.Trim(host, "[]")); parsed != nil {
+		return parsed.String()
+	}
+
+	return strings.Trim(host, "[]")
 }
 
 // Was a network specified? E.g. --network=kraft0

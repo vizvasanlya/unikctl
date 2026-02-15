@@ -186,6 +186,11 @@ func NewCmd() *cobra.Command {
 func (opts *RunOptions) Pre(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 
+	if cmd != nil && cmd.Name() == "deploy" {
+		// Deploy is the async UX surface and should never block on log streaming.
+		opts.Detach = true
+	}
+
 	if opts.Debug {
 		opts.WithKernelDbg = true
 	}
@@ -540,11 +545,21 @@ func (opts *RunOptions) Run(ctx context.Context, args []string) (retErr error) {
 
 	completionMessage = fmt.Sprintf("machine %s started", machine.Name)
 
-	return start.Start(ctx, &start.StartOptions{
+	if err := start.Start(ctx, &start.StartOptions{
 		Detach:   opts.Detach,
 		Platform: opts.platform.String(),
 		Remove:   opts.Remove,
-	}, machine.Name)
+	}, machine.Name); err != nil {
+		return err
+	}
+
+	if opts.Detach {
+		if launchURL := launchURLFromMachinePorts(machine.Spec.Ports, "127.0.0.1"); launchURL != "" {
+			fmt.Fprintf(iostreams.G(ctx).Out, "launch: %s\n", launchURL)
+		}
+	}
+
+	return nil
 }
 
 func (opts *RunOptions) prepareSourceDirectory(ctx context.Context, args []string) ([]string, error) {
