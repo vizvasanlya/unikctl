@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	machineapi "unikctl.sh/api/machine/v1alpha1"
 	"unikctl.sh/cmdfactory"
@@ -559,6 +560,13 @@ func (opts *PsOptions) operationEntries(ctx context.Context, items []PsEntry) ([
 			message = "-"
 		}
 
+		if staleOperationRecord(record, state) {
+			state = operations.StateFailed
+			if message == "-" || strings.EqualFold(strings.TrimSpace(message), "resolving deployment input") {
+				message = "stale operation record (previous deploy interrupted before completion)"
+			}
+		}
+
 		entries = append(entries, OperationEntry{
 			ID:      record.ID,
 			Kind:    record.Kind,
@@ -571,6 +579,28 @@ func (opts *PsOptions) operationEntries(ctx context.Context, items []PsEntry) ([
 	}
 
 	return entries, nil
+}
+
+func staleOperationRecord(record operations.Record, state operations.State) bool {
+	if record.Kind != operations.KindDeploy {
+		return false
+	}
+	if strings.TrimSpace(record.Machine) != "" {
+		return false
+	}
+	if state != operations.StateRunning && state != operations.StatePending && state != operations.StateSubmitted {
+		return false
+	}
+
+	updated := record.UpdatedAt
+	if updated.IsZero() {
+		updated = record.CreatedAt
+	}
+	if updated.IsZero() {
+		return false
+	}
+
+	return time.Since(updated) > 15*time.Minute
 }
 
 func parseMachineState(value string) machineapi.MachineState {
