@@ -69,6 +69,7 @@ type pyprojectManifest struct {
 type generatedKraftfile struct {
 	Spec    string   `yaml:"spec"`
 	Runtime string   `yaml:"runtime"`
+	Rootfs  string   `yaml:"rootfs,omitempty"`
 	Cmd     []string `yaml:"cmd,omitempty"`
 }
 
@@ -217,7 +218,7 @@ func runNativeSourcePipeline(ctx context.Context, opts *BuildOptions) (*nativePi
 		log.G(ctx).WithError(err).Debug("could not auto-generate default unik.yaml")
 	}
 
-	if err := writeGeneratedKraftfile(kraftfilePath, runtimeName, command); err != nil {
+	if err := writeGeneratedKraftfile(kraftfilePath, runtimeName, rootfsDir, command); err != nil {
 		return nil, err
 	}
 
@@ -748,10 +749,11 @@ func (*customPack) Build(ctx context.Context, opts *BuildOptions, workdir, rootf
 	}, nil
 }
 
-func writeGeneratedKraftfile(path, runtimeName string, cmd []string) error {
+func writeGeneratedKraftfile(path, runtimeName, rootfs string, cmd []string) error {
 	data, err := yaml.Marshal(generatedKraftfile{
 		Spec:    "v0.6",
 		Runtime: runtimeName,
+		Rootfs:  rootfs,
 		Cmd:     cmd,
 	})
 	if err != nil {
@@ -1092,6 +1094,11 @@ func copyFile(src, dst string) error {
 	}
 	defer in.Close()
 
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
@@ -1103,6 +1110,12 @@ func copyFile(src, dst string) error {
 	defer out.Close()
 
 	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+
+	// Preserve the source file mode (including executable bits) so staged
+	// binaries remain runnable inside the rootfs.
+	if err := out.Chmod(info.Mode().Perm()); err != nil {
 		return err
 	}
 
