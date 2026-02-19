@@ -553,7 +553,9 @@ func (opts *RunOptions) Run(ctx context.Context, args []string) (retErr error) {
 		return err
 	}
 
-	if opts.Detach {
+	opts.persistLocalDeployment(ctx, machine, args)
+
+	if opts.Detach && !controlplaneapi.InServerMode(ctx) {
 		if launchURL := launchURLFromMachinePorts(machine.Spec.Ports, "127.0.0.1"); launchURL != "" {
 			fmt.Fprintf(iostreams.G(ctx).Out, "launch: %s\n", launchURL)
 		}

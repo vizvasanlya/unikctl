@@ -21,6 +21,7 @@ import (
 	volumeapi "unikctl.sh/api/volume/v1alpha1"
 	"unikctl.sh/cmdfactory"
 	"unikctl.sh/internal/controlplaneapi"
+	"unikctl.sh/internal/localdeploy"
 	"unikctl.sh/internal/operations"
 	"unikctl.sh/iostreams"
 	"unikctl.sh/log"
@@ -296,6 +297,21 @@ func (opts *RemoveOptions) Run(ctx context.Context, args []string) (retErr error
 
 	if len(errs) > 0 {
 		return errors.Join(errs...)
+	}
+
+	if !controlplaneapi.InServerMode(ctx) {
+		store, err := localdeploy.NewStore(ctx)
+		if err != nil {
+			log.G(ctx).WithError(err).Debug("could not open local deploy store")
+		} else if opts.All {
+			if err := store.Clear(); err != nil {
+				log.G(ctx).WithError(err).Debug("could not clear local deploy store")
+			}
+		} else if len(targets) > 0 {
+			if err := store.RemoveMachines(targets...); err != nil {
+				log.G(ctx).WithError(err).Debug("could not update local deploy store after destroy")
+			}
+		}
 	}
 
 	completionMessage = fmt.Sprintf("destroyed %d machine(s)", removedCount)

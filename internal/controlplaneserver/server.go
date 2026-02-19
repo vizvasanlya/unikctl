@@ -56,6 +56,8 @@ type Server struct {
 	metrics      *metricsCollector
 	wg           sync.WaitGroup
 	shutdownOnce sync.Once
+	recoverMu    sync.Mutex
+	recoverAt    map[string]time.Time
 }
 
 const (
@@ -145,6 +147,7 @@ func New(ctx context.Context, addr string, workers int) (*Server, error) {
 		tokenScopes:  tokenScopes,
 		jwtSecret:    strings.TrimSpace(controlPlaneCfg.JWTSecret),
 		metrics:      newMetricsCollector(),
+		recoverAt:    map[string]time.Time{},
 	}
 
 	if envMaxRetries := strings.TrimSpace(os.Getenv("UNIKCTL_CONTROL_PLANE_MAX_RETRIES")); envMaxRetries != "" {
@@ -204,6 +207,7 @@ func (server *Server) Run() error {
 	}
 
 	go server.reconcileNodes(server.ctx)
+	go server.reconcileWorkloads(server.ctx)
 
 	go func() {
 		<-server.ctx.Done()

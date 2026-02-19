@@ -317,6 +317,8 @@ func (opts *PsOptions) PsTable(ctx context.Context) ([]PsEntry, error) {
 		return nil, err
 	}
 
+	opts.reconcileLocalDeployments(ctx, controller)
+
 	machines, err := controller.List(ctx, &machineapi.MachineList{})
 	if err != nil {
 		return nil, err
