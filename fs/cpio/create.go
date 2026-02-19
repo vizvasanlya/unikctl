@@ -55,6 +55,43 @@ func CreateFS(ctx context.Context, output string, source string, opts ...CpioCre
 		}
 	}
 
+	// If the source is already a CPIO archive, preserve it as-is. Re-streaming
+	// raw CPIO bytes through cpio.Writer is invalid and can produce
+	// "cpio: write too long" because Writer expects per-entry headers/data.
+	if fsutils.IsCpioFile(source) {
+		srcPath := filepath.Clean(source)
+		dstPath := filepath.Clean(output)
+		if srcPath == dstPath {
+			return nil
+		}
+
+		in, err := os.Open(srcPath)
+		if err != nil {
+			return fmt.Errorf("could not open CPIO source file: %w", err)
+		}
+		defer in.Close()
+
+		if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
+			return fmt.Errorf("could not create output directory: %w", err)
+		}
+
+		out, err := os.OpenFile(dstPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o644)
+		if err != nil {
+			return fmt.Errorf("could not open initramfs file: %w", err)
+		}
+		defer out.Close()
+
+		if _, err := io.Copy(out, in); err != nil {
+			return fmt.Errorf("could not copy CPIO data: %w", err)
+		}
+
+		if err := out.Sync(); err != nil {
+			log.G(ctx).Errorf("syncing cpio archive failed: %s", err)
+		}
+
+		return nil
+	}
+
 	f, err := os.OpenFile(output, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		return fmt.Errorf("could not open initramfs file: %w", err)
@@ -73,10 +110,6 @@ func CreateFS(ctx context.Context, output string, source string, opts ...CpioCre
 	case fsutils.IsOciArchive(source):
 		if err := c.CreateFSFromOCIImage(ctx, writer, source); err != nil {
 			return fmt.Errorf("could not create CPIO archive from OCI image: %w", err)
-		}
-	case fsutils.IsCpioFile(source):
-		if err := c.CreateFSFromCpio(ctx, writer, source); err != nil {
-			return fmt.Errorf("could not create CPIO archive from CPIO file: %w", err)
 		}
 	case fsutils.IsTarFile(source),
 		fsutils.IsTarGzFile(source):
