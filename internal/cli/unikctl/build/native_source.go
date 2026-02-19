@@ -1063,6 +1063,24 @@ func copyDir(src, dst string, skip map[string]struct{}) error {
 			return os.MkdirAll(dstPath, 0o755)
 		}
 
+		if d.Type()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+
+			if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
+				return err
+			}
+
+			_ = os.Remove(dstPath)
+			if err := os.Symlink(target, dstPath); err != nil {
+				// Fall back to a dereferenced copy on platforms without symlink support.
+				return copyFile(path, dstPath)
+			}
+			return nil
+		}
+
 		return copyFile(path, dstPath)
 	})
 }

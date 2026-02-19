@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,17 +29,19 @@ type randSeq struct {
 	number int32
 }
 
-// Int32 returns a random int32 value between 1000 and 4000. It is used to
-// generate inode numbers for files in the CPIO archive.
+// Int32 returns a positive, deterministic inode sequence for CPIO headers.
 func (r *randSeq) Int32() int32 {
 	if r.number == 0 {
-		r.number = rand.Int32()%3000 + 1000
+		r.number = 1000
 	} else {
 		r.number += 1
 	}
 
 	return r.number
 }
+
+const cpioSVR4MaxFileSize int64 = 0xffffffff
+const cpioSVR4MaxNameSize = 4096
 
 type createOptions struct {
 	opts CpioCreateOptions
@@ -343,6 +344,9 @@ func (c *createOptions) CreateFSFromTar(ctx context.Context, writer *cpio.Writer
 		if internal == "./." {
 			continue
 		}
+		if len(internal)+1 > cpioSVR4MaxNameSize {
+			return fmt.Errorf("cpio entry path too long: %q", internal)
+		}
 
 		cpioHeader := &cpio.Header{
 			Name:    internal,
@@ -379,6 +383,9 @@ func (c *createOptions) CreateFSFromTar(ctx context.Context, writer *cpio.Writer
 			cpioHeader.Mode |= cpio.TypeSymlink
 			cpioHeader.Linkname = tarHeader.Linkname
 			cpioHeader.Size = int64(len(tarHeader.Linkname))
+			if cpioHeader.Size > cpioSVR4MaxFileSize {
+				return fmt.Errorf("cpio symlink target too large for %q", internal)
+			}
 
 			if err := writer.WriteHeader(cpioHeader); err != nil {
 				return fmt.Errorf("could not write CPIO header: %w", err)
@@ -414,6 +421,9 @@ func (c *createOptions) CreateFSFromTar(ctx context.Context, writer *cpio.Writer
 			cpioHeader.Mode |= cpio.TypeRegular
 			cpioHeader.Linkname = tarHeader.Linkname
 			cpioHeader.Size = tarHeader.FileInfo().Size()
+			if cpioHeader.Size > cpioSVR4MaxFileSize {
+				return fmt.Errorf("cpio entry %q exceeds %d-byte newc limit (%d bytes)", internal, cpioSVR4MaxFileSize, cpioHeader.Size)
+			}
 			if _, ok := fileCount[tarHeader.Name]; ok {
 				cpioHeader.Links = fileCount[tarHeader.Name].Count
 				cpioHeader.Inode = int64(fileCount[tarHeader.Name].Inode)
@@ -426,6 +436,9 @@ func (c *createOptions) CreateFSFromTar(ctx context.Context, writer *cpio.Writer
 			data, err := io.ReadAll(tarReader)
 			if err != nil {
 				return fmt.Errorf("could not read file: %w", err)
+			}
+			if int64(len(data)) != cpioHeader.Size {
+				return fmt.Errorf("cpio entry size mismatch for %q: header=%d data=%d", internal, cpioHeader.Size, len(data))
 			}
 
 			if _, err := writer.Write(data); err != nil {
@@ -469,6 +482,9 @@ func (c *createOptions) CreateFSFromDirectory(ctx context.Context, writer *cpio.
 			return nil // Do not archive empty paths
 		}
 		internal = "." + filepath.ToSlash(internal)
+		if len(internal)+1 > cpioSVR4MaxNameSize {
+			return fmt.Errorf("cpio entry path too long: %q", internal)
+		}
 
 		info, err := d.Info()
 		if err != nil {
@@ -508,7 +524,10 @@ func (c *createOptions) CreateFSFromDirectory(ctx context.Context, writer *cpio.
 		if info.Mode()&os.ModeSymlink != 0 {
 			targetLink, err = os.Readlink(path)
 			data = []byte(targetLink)
-		} else if d.Type().IsRegular() {
+		} else if info.Mode().IsRegular() {
+			if info.Size() > cpioSVR4MaxFileSize {
+				return fmt.Errorf("cpio entry %q exceeds %d-byte newc limit (%d bytes)", internal, cpioSVR4MaxFileSize, info.Size())
+			}
 			data, err = os.ReadFile(path)
 		} else {
 			log.G(ctx).Warnf("unsupported file: %s", path)
@@ -553,6 +572,9 @@ func (c *createOptions) CreateFSFromDirectory(ctx context.Context, writer *cpio.
 			header.Mode |= cpio.TypeSymlink
 			header.Linkname = targetLink
 			header.Size = int64(len(data))
+		}
+		if header.Size > cpioSVR4MaxFileSize {
+			return fmt.Errorf("cpio entry %q exceeds %d-byte newc limit (%d bytes)", internal, cpioSVR4MaxFileSize, header.Size)
 		}
 
 		if err := writer.WriteHeader(header); err != nil {
