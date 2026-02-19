@@ -43,6 +43,7 @@ type PsOptions struct {
 
 const (
 	MemoryMiB = 1024 * 1024
+	operationStaleAfter = 15 * time.Minute
 )
 
 func NewCmd() *cobra.Command {
@@ -422,17 +423,18 @@ func (opts *PsOptions) PrintPsTable(ctx context.Context, items []PsEntry) error 
 		opTable.AddField("OPERATION", cs.Bold)
 		opTable.AddField("KIND", cs.Bold)
 		opTable.AddField("TARGET", cs.Bold)
-		opTable.AddField("STATE", cs.Bold)
+		opTable.AddField("STATUS", cs.Bold)
 		opTable.AddField("ATTEMPTS", cs.Bold)
 		opTable.AddField("UPDATED", cs.Bold)
 		opTable.AddField("MESSAGE", cs.Bold)
 		opTable.EndRow()
 
 		for _, op := range ops {
+			statusLabel, statusColor := operationDisplay(op)
 			opTable.AddField(op.ID, nil)
 			opTable.AddField(string(op.Kind), nil)
 			opTable.AddField(op.Target, nil)
-			opTable.AddField(string(op.State), OperationStateColor[op.State])
+			opTable.AddField(statusLabel, statusColor)
 			opTable.AddField(fmt.Sprintf("%d", maxInt(op.Attempt, 1)), nil)
 			opTable.AddField(op.Updated, nil)
 			opTable.AddField(op.Message, nil)
@@ -560,10 +562,11 @@ func (opts *PsOptions) operationEntries(ctx context.Context, items []PsEntry) ([
 			message = "-"
 		}
 
-		if staleOperationRecord(record, state) {
+		if staleOperationRecord(record, state, machineStates) {
 			state = operations.StateFailed
-			if message == "-" || strings.EqualFold(strings.TrimSpace(message), "resolving deployment input") {
-				message = "stale operation record (previous deploy interrupted before completion)"
+			lowerMessage := strings.ToLower(strings.TrimSpace(message))
+			if message == "-" || strings.EqualFold(strings.TrimSpace(message), "resolving deployment input") || strings.HasPrefix(lowerMessage, "deployment submitted for ") {
+				message = "stale operation record (machine missing after restart or interrupted deploy)"
 			}
 		}
 
@@ -581,15 +584,18 @@ func (opts *PsOptions) operationEntries(ctx context.Context, items []PsEntry) ([
 	return entries, nil
 }
 
-func staleOperationRecord(record operations.Record, state operations.State) bool {
+func staleOperationRecord(record operations.Record, state operations.State, machineStates map[string]machineapi.MachineState) bool {
 	if record.Kind != operations.KindDeploy {
-		return false
-	}
-	if strings.TrimSpace(record.Machine) != "" {
 		return false
 	}
 	if state != operations.StateRunning && state != operations.StatePending && state != operations.StateSubmitted {
 		return false
+	}
+	machineName := strings.TrimSpace(record.Machine)
+	if machineName != "" {
+		if _, ok := machineStates[machineName]; ok {
+			return false
+		}
 	}
 
 	updated := record.UpdatedAt
@@ -600,7 +606,7 @@ func staleOperationRecord(record operations.Record, state operations.State) bool
 		return false
 	}
 
-	return time.Since(updated) > 15*time.Minute
+	return time.Since(updated) > operationStaleAfter
 }
 
 func parseMachineState(value string) machineapi.MachineState {
@@ -675,6 +681,37 @@ func deriveOperationState(record operations.Record, machineStates map[string]mac
 	}
 
 	return record.State
+}
+
+func operationDisplay(op OperationEntry) (string, colorFunc) {
+	switch op.Kind {
+	case operations.KindDeploy:
+		switch op.State {
+		case operations.StateFailed:
+			return "failed", OperationStateColor[operations.StateFailed]
+		case operations.StateSucceeded:
+			return "running", OperationStateColor[operations.StateSucceeded]
+		default:
+			return "deploying", OperationStateColor[operations.StateRunning]
+		}
+
+	case operations.KindDestroy:
+		switch op.State {
+		case operations.StateFailed:
+			return "failed", OperationStateColor[operations.StateFailed]
+		case operations.StateSucceeded:
+			return "destroyed", OperationStateColor[operations.StateSucceeded]
+		default:
+			return "destroying", OperationStateColor[operations.StateRunning]
+		}
+	}
+
+	label := strings.TrimSpace(string(op.State))
+	if label == "" {
+		label = string(operations.StatePending)
+	}
+
+	return label, OperationStateColor[op.State]
 }
 
 type launchCandidate struct {

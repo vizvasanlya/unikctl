@@ -66,6 +66,11 @@ func inferAutoPublishPorts(machine *machineapi.Machine) []string {
 	}
 
 	ports := detectServicePortsFromArgs(machine.Spec.ApplicationArgs)
+	if len(ports) == 0 {
+		if fallbackPort, ok := inferDefaultServicePort(machine.Spec.ApplicationArgs); ok {
+			ports = append(ports, fallbackPort)
+		}
+	}
 	if len(ports) == 0 && looksLikeStaticHTTPServer(machine.Spec.ApplicationArgs) {
 		ports = append(ports, 8080)
 	}
@@ -96,7 +101,14 @@ func detectServicePortsFromArgs(args []string) []int {
 		}
 
 		switch current {
-		case "--addr", "-addr", "--listen", "-listen", "--port", "-p":
+		case "--addr", "-addr", "--listen", "-listen", "--port", "-p", "--bind", "-b", "--http", "--socket":
+			if i+1 < len(args) {
+				if port, ok := parsePotentialPort(args[i+1]); ok {
+					ports = append(ports, port)
+				}
+			}
+			continue
+		case "runserver":
 			if i+1 < len(args) {
 				if port, ok := parsePotentialPort(args[i+1]); ok {
 					ports = append(ports, port)
@@ -105,8 +117,18 @@ func detectServicePortsFromArgs(args []string) []int {
 			continue
 		}
 
-		for _, prefix := range []string{"--addr=", "--listen=", "--port="} {
+		for _, prefix := range []string{"--addr=", "--listen=", "--port=", "--bind=", "-b=", "--http=", "--socket="} {
 			if strings.HasPrefix(current, prefix) {
+				if port, ok := parsePotentialPort(strings.TrimPrefix(current, prefix)); ok {
+					ports = append(ports, port)
+				}
+				break
+			}
+		}
+
+		// Handle compact forms like `-p8080` or `-b0.0.0.0:8000`.
+		for _, prefix := range []string{"-p", "-b"} {
+			if strings.HasPrefix(current, prefix) && len(current) > len(prefix) {
 				if port, ok := parsePotentialPort(strings.TrimPrefix(current, prefix)); ok {
 					ports = append(ports, port)
 				}
@@ -116,6 +138,48 @@ func detectServicePortsFromArgs(args []string) []int {
 	}
 
 	return ports
+}
+
+func inferDefaultServicePort(args []string) (int, bool) {
+	hasToken := func(token string) bool {
+		for _, arg := range args {
+			if strings.EqualFold(strings.TrimSpace(arg), token) {
+				return true
+			}
+		}
+		return false
+	}
+
+	containsName := func(substring string) bool {
+		for _, arg := range args {
+			value := strings.ToLower(strings.TrimSpace(arg))
+			if value == "" {
+				continue
+			}
+			if strings.Contains(value, substring) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Common Python HTTP servers default to 8000 if no explicit port is provided.
+	if hasToken("uvicorn") || hasToken("gunicorn") || hasToken("hypercorn") || hasToken("runserver") {
+		return 8000, true
+	}
+
+	// Flask defaults to 5000 if no explicit port is provided.
+	if hasToken("flask") {
+		return 5000, true
+	}
+
+	// For python entry scripts (main.py/app.py/server.py), assume backend-style default.
+	if (hasToken("python") || hasToken("python3")) &&
+		(containsName("main.py") || containsName("app.py") || containsName("server.py") || containsName("manage.py")) {
+		return 8000, true
+	}
+
+	return 0, false
 }
 
 func parsePotentialPort(value string) (int, bool) {

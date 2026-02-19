@@ -62,6 +62,7 @@ const (
 	maxArtifactUploadBytes = int64(2 << 30) // 2 GiB
 	artifactRetention      = 24 * time.Hour
 	defaultMaxRetries      = 3
+	operationStaleAfter    = 15 * time.Minute
 )
 
 type job struct {
@@ -716,6 +717,13 @@ func (server *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 
 		state := deriveOperationState(record, machineStates)
+		message := record.Message
+		if staleOperationRecord(record, state, machineStates) {
+			lowerMessage := strings.ToLower(strings.TrimSpace(message))
+			if strings.TrimSpace(message) == "" || strings.EqualFold(strings.TrimSpace(message), "resolving deployment input") || strings.HasPrefix(lowerMessage, "deployment submitted for ") {
+				message = "stale operation record (machine missing after restart or interrupted deploy)"
+			}
+		}
 		operationsOut = append(operationsOut, controlplaneapi.Operation{
 			ID:        record.ID,
 			Kind:      string(record.Kind),
@@ -723,7 +731,7 @@ func (server *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			Target:    target,
 			TraceID:   record.TraceID,
 			Attempts:  record.Attempts,
-			Message:   record.Message,
+			Message:   message,
 			Error:     record.Error,
 			CreatedAt: record.CreatedAt,
 			UpdatedAt: record.UpdatedAt,
@@ -1212,11 +1220,17 @@ func deriveOperationState(record operations.Record, machineStates map[string]mac
 	switch record.Kind {
 	case operations.KindDeploy:
 		if record.Machine == "" {
+			if staleOperationRecord(record, record.State, machineStates) {
+				return operations.StateFailed
+			}
 			return record.State
 		}
 
 		state, ok := machineStates[record.Machine]
 		if !ok {
+			if staleOperationRecord(record, record.State, machineStates) {
+				return operations.StateFailed
+			}
 			return record.State
 		}
 
@@ -1244,6 +1258,32 @@ func deriveOperationState(record operations.Record, machineStates map[string]mac
 	}
 
 	return record.State
+}
+
+func staleOperationRecord(record operations.Record, state operations.State, machineStates map[string]machineapi.MachineState) bool {
+	if record.Kind != operations.KindDeploy {
+		return false
+	}
+	if state != operations.StateRunning && state != operations.StatePending && state != operations.StateSubmitted {
+		return false
+	}
+
+	machineName := strings.TrimSpace(record.Machine)
+	if machineName != "" {
+		if _, ok := machineStates[machineName]; ok {
+			return false
+		}
+	}
+
+	updated := record.UpdatedAt
+	if updated.IsZero() {
+		updated = record.CreatedAt
+	}
+	if updated.IsZero() {
+		return false
+	}
+
+	return time.Since(updated) > operationStaleAfter
 }
 
 func serviceMachineReady(state machineapi.MachineState) bool {
