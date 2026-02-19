@@ -1,0 +1,106 @@
+name: runtime-quality
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_prefix:
+        description: "Target runtime registry prefix"
+        required: false
+        default: "ghcr.io/vizvasanlya/unikctl"
+      tag:
+        description: "Tag for validation builds"
+        required: false
+        default: ""
+  push:
+    branches: [main]
+    paths:
+      - "runtimes/**"
+      - "scripts/build-runtimes-from-source.sh"
+      - "tools/runtimebuilder/**"
+      - "tools/runtimecheck/**"
+      - ".github/workflows/runtime-quality.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  validate-sources:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Validate runtime source contracts
+        run: |
+          go run ./tools/runtimecheck --root runtimes --runtimes base,nodejs,python,java,dotnet
+
+  build-matrix:
+    runs-on: ubuntu-latest
+    needs: validate-sources
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [base, nodejs, python, java, dotnet]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Configure GHCR auth (no Docker daemon)
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p "$HOME/.docker"
+          auth="$(printf "%s:%s" "$REGISTRY_USER" "$REGISTRY_TOKEN" | base64 | tr -d '\n')"
+          cat > "$HOME/.docker/config.json" <<EOF
+          {
+            "auths": {
+              "ghcr.io": {
+                "auth": "$auth"
+              }
+            }
+          }
+          EOF
+
+      - name: Build and push runtime
+        run: |
+          target_prefix="${{ github.event.inputs.target_prefix }}"
+          if [ -z "$target_prefix" ]; then
+            target_prefix="ghcr.io/vizvasanlya/unikctl"
+          fi
+          tag="${{ github.event.inputs.tag }}"
+          if [ -z "$tag" ]; then
+            tag="ci-${GITHUB_RUN_ID}"
+          fi
+          chmod +x scripts/build-runtimes-from-source.sh
+          export TARGET_PREFIX="$target_prefix"
+          export RUNTIMES="${{ matrix.runtime }}"
+          export SOURCE_REPO_TEMPLATE="."
+          export APPLY_BANNER_PATCH="false"
+          export TAGS="$tag"
+          ./scripts/build-runtimes-from-source.sh
+
+      - name: Verify published digest
+        run: |
+          target_prefix="${{ github.event.inputs.target_prefix }}"
+          if [ -z "$target_prefix" ]; then
+            target_prefix="ghcr.io/vizvasanlya/unikctl"
+          fi
+          tag="${{ github.event.inputs.tag }}"
+          if [ -z "$tag" ]; then
+            tag="ci-${GITHUB_RUN_ID}"
+          fi
+          ref="${target_prefix}/${{ matrix.runtime }}:${tag}"
+          digest="$(go run ./tools/registrydigest --ref "$ref")"
+          echo "runtime=${{ matrix.runtime }} ref=${ref} digest=${digest}"

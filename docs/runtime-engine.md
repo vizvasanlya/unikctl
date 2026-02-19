@@ -1,99 +1,58 @@
-# Runtime Engine (Image Backbone)
+# Runtime Engine (Production Notes)
 
 `unikctl` deploys apps by combining:
-- your app/rootfs artifact
-- a runtime image (`base`, `nodejs`, `python`, `java`, `dotnet`)
+- app/rootfs artifact built from source
+- runtime image (`base`, `nodejs`, `python`, `java`, `dotnet`)
 
-After rebranding, runtime images are expected in:
+Runtime images are owned under:
 - `ghcr.io/vizvasanlya/unikctl/*`
 
-## Quick Start (No Prior Knowledge)
+## No-Docker Runtime Pipeline
 
-1. Login to GHCR:
+Runtime build and publish paths use Go registry APIs and do not require a Docker daemon:
+- `scripts/build-runtimes-from-source.sh`
+- `scripts/generate-runtime-lock.sh`
+- `scripts/publish-runtimes.sh`
+- `tools/registrydigest`
+- `tools/registrycopy`
 
-```bash
-echo "$GHCR_PAT" | docker login ghcr.io -u vizvasanlya --password-stdin
-```
+Auth is read from `~/.docker/config.json` (credential file only).
 
-2. Publish runtime images in your namespace:
+## Default Runtime Source Layout
+
+The repository ships in-repo runtime sources:
+- `runtimes/base`
+- `runtimes/nodejs`
+- `runtimes/python`
+- `runtimes/java`
+- `runtimes/dotnet`
+
+Each runtime source is defined by `unik.yaml`. The runtime builder auto-generates internal manifest files and does not require users to author `Kraftfile`.
+
+## Build Runtimes
+
+Local:
 
 ```bash
 cd /path/to/unikctl-rebrand
-./scripts/publish-runtimes.sh
+./scripts/build-runtimes-from-source.sh
+./scripts/generate-runtime-lock.sh
 ```
 
-Windows PowerShell:
-
-```powershell
-cd D:\kernel\unikctl-rebrand
-.\scripts\publish-runtimes.ps1
-```
-
-With retry hardening:
-
-```bash
-RETRIES=5 ./scripts/publish-runtimes.sh
-```
-
-Required vs optional behavior:
-
-- `REQUIRED_IMAGES` controls which images must exist at source (default: `base`).
-- Missing optional images are skipped with warning.
-- Missing required images fail the publish.
-
-```bash
-REQUIRED_IMAGES=base,nodejs ./scripts/publish-runtimes.sh
-```
-
-Per-runtime explicit source override:
-
-```bash
-SOURCE_NODEJS=<registry>/<repo>/nodejs:latest ./scripts/publish-runtimes.sh
-```
-
-PowerShell:
-
-```powershell
-$env:SOURCE_NODEJS = "<registry>/<repo>/nodejs:latest"
-.\scripts\publish-runtimes.ps1
-```
-
-3. Verify one image:
-
-```bash
-docker buildx imagetools inspect ghcr.io/vizvasanlya/unikctl/base:latest
-```
-
-4. Deploy:
-
-```bash
-unikctl deploy .
-```
-
-## Publish via GitHub Actions
-
-Workflow:
+GitHub Actions:
+- `.github/workflows/build-runtimes.yml`
 - `.github/workflows/publish-runtimes.yml`
+- `.github/workflows/runtime-quality.yml`
 
-How to use:
-1. Open `Actions` -> `publish-runtimes`.
-2. Click `Run workflow`.
-3. Keep defaults (`source_prefix=ghcr.io/vizvasanlya/unikctl`, `target_prefix=ghcr.io/vizvasanlya/unikctl`, `images=base,nodejs,python,java,dotnet`, `tags=latest`).
-4. Use `required_images` if you want strict fail for additional runtimes.
+## Validate Production Quality
 
-## Optional: publish release tag too
+`runtime-quality` workflow performs:
+1. Runtime source contract checks (`tools/runtimecheck`)
+2. Runtime build matrix (`base,nodejs,python,java,dotnet`)
+3. Digest verification after publish
 
-```bash
-TAGS=latest,v0.1.11 ./scripts/publish-runtimes.sh
-```
+## Why This Matters
 
-## Why this matters
+If runtime images are not published and reachable, `unikctl build/deploy` fails at runtime lookup.
 
-If these images are missing, `unikctl build/deploy` can fail at runtime lookup/pull.
-
-## Production baseline recommendation
-
-1. Publish required runtimes before each public CLI release.
-2. Keep `latest` plus a version tag (for example `v0.1.12`).
-3. Run `unikctl doctor` on deployment hosts to verify runtime image availability.
-4. Treat runtime images as release artifacts and patch regularly.
+Use digest pinning (`internal/runtimeutil/runtime-lock.json`) for reproducible deploys.

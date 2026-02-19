@@ -196,7 +196,7 @@ func MissingRuntimeHint(reference string) string {
 
 	if strings.HasPrefix(ref.Name, RuntimeRegistryPrefix+"/") {
 		return fmt.Sprintf(
-			"hint: ensure '%s' is published and accessible in GHCR (docker login ghcr.io may be required)",
+			"hint: ensure '%s' is published and accessible in GHCR (configure registry credentials in ~/.docker/config.json or runtime auth settings)",
 			ref.String(),
 		)
 	}

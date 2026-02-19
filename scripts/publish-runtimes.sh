@@ -10,7 +10,7 @@ set -euo pipefail
 #   TAGS=latest
 #
 # Required auth:
-#   docker login ghcr.io -u <user> --password-stdin
+#   ~/.docker/config.json with registry credentials (Docker daemon not required)
 #
 # Usage:
 #   ./scripts/publish-runtimes.sh
@@ -32,12 +32,9 @@ need_cmd() {
   }
 }
 
-need_cmd docker
+need_cmd go
 
-if ! docker buildx version >/dev/null 2>&1; then
-  echo "error: docker buildx is required" >&2
-  exit 1
-fi
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "runtime publish config:"
 echo "  source: ${SOURCE_PREFIX}"
@@ -87,7 +84,10 @@ is_required_image() {
 }
 
 inspect_ref() {
-  docker buildx imagetools inspect "$1" >/dev/null 2>&1
+  (
+    cd "$ROOT_DIR"
+    go run ./tools/registrydigest --ref "$1" >/dev/null 2>&1
+  )
 }
 
 resolve_source_ref() {
@@ -136,8 +136,8 @@ for image in "${IMAGES_ARR[@]}"; do
     fi
 
     echo "publishing ${src} -> ${dst}"
-    with_retry "${RETRIES}" docker buildx imagetools create --tag "${dst}" "${src}"
-    with_retry "${RETRIES}" docker buildx imagetools inspect "${dst}" >/dev/null
+    with_retry "${RETRIES}" bash -lc "cd \"$ROOT_DIR\" && go run ./tools/registrycopy --src \"$src\" --dst \"$dst\""
+    with_retry "${RETRIES}" bash -lc "cd \"$ROOT_DIR\" && go run ./tools/registrydigest --ref \"$dst\" >/dev/null"
   done
 done
 

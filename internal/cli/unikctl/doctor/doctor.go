@@ -154,14 +154,6 @@ func checkRuntimeTooling() checkResult {
 }
 
 func checkRuntimeRegistry(ctx context.Context) checkResult {
-	if _, err := exec.LookPath("docker"); err != nil {
-		return checkResult{
-			Name:   "runtime-registry",
-			Status: "WARN",
-			Detail: "docker not found; cannot verify runtime images",
-		}
-	}
-
 	requiredImages := []string{
 		runtimeutil.DefaultRuntime,
 	}
@@ -175,11 +167,11 @@ func checkRuntimeRegistry(ctx context.Context) checkResult {
 	missingRequired := []string{}
 	for _, image := range requiredImages {
 		checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		cmd := exec.CommandContext(checkCtx, "docker", "buildx", "imagetools", "inspect", image)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			missingRequired = append(missingRequired, fmt.Sprintf("%s (%s)", image, firstLine(strings.TrimSpace(string(output)))))
-		}
+		_, err := runtimeutil.ResolveDigest(checkCtx, image)
 		cancel()
+		if err != nil {
+			missingRequired = append(missingRequired, fmt.Sprintf("%s (%s)", image, firstLine(strings.TrimSpace(err.Error()))))
+		}
 	}
 
 	if len(missingRequired) > 0 {
@@ -193,11 +185,11 @@ func checkRuntimeRegistry(ctx context.Context) checkResult {
 	missingOptional := []string{}
 	for _, image := range optionalImages {
 		checkCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		cmd := exec.CommandContext(checkCtx, "docker", "buildx", "imagetools", "inspect", image)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			missingOptional = append(missingOptional, fmt.Sprintf("%s (%s)", image, firstLine(strings.TrimSpace(string(output)))))
-		}
+		_, err := runtimeutil.ResolveDigest(checkCtx, image)
 		cancel()
+		if err != nil {
+			missingOptional = append(missingOptional, fmt.Sprintf("%s (%s)", image, firstLine(strings.TrimSpace(err.Error()))))
+		}
 	}
 
 	if len(missingOptional) > 0 {

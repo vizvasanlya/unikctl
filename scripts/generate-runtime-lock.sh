@@ -12,7 +12,7 @@ set -euo pipefail
 #   OUTPUT=internal/runtimeutil/runtime-lock.json
 #
 # Requires:
-#   docker buildx imagetools inspect
+#   go
 
 TARGET_PREFIX="${TARGET_PREFIX:-ghcr.io/vizvasanlya/unikctl}"
 RUNTIMES_CSV="${RUNTIMES:-base,nodejs,python,java,dotnet}"
@@ -28,12 +28,9 @@ need_cmd() {
   }
 }
 
-need_cmd docker
+need_cmd go
 
-if ! docker buildx version >/dev/null 2>&1; then
-  echo "error: docker buildx is required" >&2
-  exit 1
-fi
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 IFS=',' read -r -a RUNTIMES_ARR <<<"${RUNTIMES_CSV}"
 
@@ -79,7 +76,10 @@ trap cleanup EXIT INT TERM
     [ -n "$runtime" ] || continue
 
     ref="${TARGET_PREFIX}/${runtime}:${LOCK_TAG}"
-    digest="$(docker buildx imagetools inspect "$ref" 2>/dev/null | awk '/^Digest:[[:space:]]+/ {print $2; exit}' || true)"
+    digest="$(
+      cd "$ROOT_DIR"
+      go run ./tools/registrydigest --ref "$ref" 2>/dev/null || true
+    )"
 
     if [ "$first_runtime" = true ]; then
       first_runtime=false

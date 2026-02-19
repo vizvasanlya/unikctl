@@ -77,6 +77,7 @@ You can build and publish runtimes from source (not mirroring) with:
 
 GitHub Actions workflow for source builds:
 - `.github/workflows/build-runtimes.yml`
+- `.github/workflows/runtime-quality.yml`
 
 Digest lock file used by runtime resolution:
 - `internal/runtimeutil/runtime-lock.json`
@@ -95,6 +96,8 @@ This repository ships default monorepo runtime sources at:
 - `runtimes/dotnet`
 
 Runtime source projects can use `unik.yaml`; `Kraftfile` generation is handled internally by the runtime builder.
+
+Registry operations in runtime scripts/workflows use Go registry APIs and do not require a Docker daemon.
 
 ## Native Source Pipeline
 
