@@ -98,6 +98,7 @@ type nativePackMetadata struct {
 }
 
 const nativePipelineLayoutVersion = 2
+const defaultPythonInterpreter = "/usr/local/bin/python3"
 
 type nativeLanguagePack interface {
 	Name() string
@@ -560,7 +561,7 @@ func (*pythonPack) Build(ctx context.Context, opts *BuildOptions, workdir, rootf
 	if len(cfg.Run.Command) > 0 {
 		return &nativeBuildResult{
 			Runtime: runtimeutil.RuntimeRegistryPrefix + "/python:latest",
-			Command: cfg.Run.Command,
+			Command: normalizePythonRunCommand(cfg.Run.Command),
 		}, nil
 	}
 
@@ -582,7 +583,7 @@ func ensurePythonTemplateUnikYAML(ctx context.Context, workdir string) error {
 		Runtime:  runtimeutil.RuntimeRegistryPrefix + "/python:latest",
 	}
 	template.Run.Command = []string{
-		"python",
+		defaultPythonInterpreter,
 		"-m",
 		"uvicorn",
 		"app.main:app",
@@ -1381,23 +1382,48 @@ func findJavaArtifact(workdir string) (string, error) {
 func detectPythonCommand(appDir string) ([]string, error) {
 	for _, candidate := range []string{"main.py", "app.py", "__main__.py", "index.py", "manage.py", "server.py"} {
 		if fileExists(filepath.Join(appDir, candidate)) {
-			return []string{"python", "/app/" + filepath.ToSlash(candidate)}, nil
+			return []string{defaultPythonInterpreter, "/app/" + filepath.ToSlash(candidate)}, nil
 		}
 	}
 
 	if module, ok := detectPythonMainModule(appDir); ok {
-		return []string{"python", "-m", module}, nil
+		return []string{defaultPythonInterpreter, "-m", module}, nil
 	}
 
 	if launcher, ok := detectPythonPyprojectScript(appDir); ok {
-		return []string{"python", "/app/" + filepath.ToSlash(launcher)}, nil
+		return []string{defaultPythonInterpreter, "/app/" + filepath.ToSlash(launcher)}, nil
 	}
 
 	if entry, ok := detectPythonFileFallback(appDir); ok {
-		return []string{"python", "/app/" + filepath.ToSlash(entry)}, nil
+		return []string{defaultPythonInterpreter, "/app/" + filepath.ToSlash(entry)}, nil
 	}
 
 	return nil, fmt.Errorf("could not detect python entrypoint; add run.command in unik.yaml (a starter template is auto-generated when missing)")
+}
+
+func normalizePythonRunCommand(command []string) []string {
+	if len(command) == 0 {
+		return command
+	}
+
+	first := strings.TrimSpace(command[0])
+	if first == "" {
+		return command
+	}
+
+	base := strings.ToLower(strings.TrimSuffix(filepath.Base(first), ".exe"))
+	switch {
+	case base == "python":
+		out := append([]string{}, command...)
+		out[0] = defaultPythonInterpreter
+		return out
+	case strings.HasPrefix(base, "python3"):
+		out := append([]string{}, command...)
+		out[0] = defaultPythonInterpreter
+		return out
+	default:
+		return command
+	}
 }
 
 func detectPythonMainModule(appDir string) (string, bool) {

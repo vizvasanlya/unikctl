@@ -150,6 +150,21 @@ func inferDefaultServicePort(args []string) (int, bool) {
 		return false
 	}
 
+	hasPythonInterpreter := func() bool {
+		for _, arg := range args {
+			value := strings.Trim(strings.TrimSpace(arg), "\"'")
+			if value == "" {
+				continue
+			}
+
+			base := strings.ToLower(strings.TrimSuffix(filepath.Base(value), ".exe"))
+			if base == "python" || strings.HasPrefix(base, "python3") {
+				return true
+			}
+		}
+		return false
+	}
+
 	containsName := func(substring string) bool {
 		for _, arg := range args {
 			value := strings.ToLower(strings.TrimSpace(arg))
@@ -174,7 +189,7 @@ func inferDefaultServicePort(args []string) (int, bool) {
 	}
 
 	// For python entry scripts (main.py/app.py/server.py), assume backend-style default.
-	if (hasToken("python") || hasToken("python3")) &&
+	if hasPythonInterpreter() &&
 		(containsName("main.py") || containsName("app.py") || containsName("server.py") || containsName("manage.py")) {
 		return 8000, true
 	}
