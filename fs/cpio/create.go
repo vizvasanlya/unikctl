@@ -526,14 +526,24 @@ func (c *createOptions) CreateFSFromDirectory(ctx context.Context, writer *cpio.
 
 		switch {
 		case info.Mode().IsRegular():
+			// Normalize regular files to standalone entries. Some userland package
+			// layouts contain hardlink metadata that can confuse boot-time CPIO
+			// extractors; serializing each file independently is more robust.
+			header.Inode = 0
+			header.DeviceID = 0
+			header.Links = 1
+			header.Size = int64(len(data))
+			header.Linkname = ""
 			header.Mode |= cpio.TypeRegular
 
 		case info.Mode()&fs.ModeSymlink != 0:
+			// Symlink payload must match target length.
+			header.Inode = 0
+			header.DeviceID = 0
+			header.Links = 1
 			header.Mode |= cpio.TypeSymlink
 			header.Linkname = targetLink
-
-		case header.Links > 0:
-			header.Size = 0
+			header.Size = int64(len(data))
 		}
 
 		if err := writer.WriteHeader(header); err != nil {
