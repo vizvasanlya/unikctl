@@ -38,7 +38,7 @@ jobs:
             --metrics-output benchmark-metrics.txt
 
       - name: Upload benchmark artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: unikctl-benchmark
           path: |
