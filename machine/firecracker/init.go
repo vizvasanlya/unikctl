@@ -42,7 +42,17 @@ func safeRegisterLegacyName(name string, v any) {
 	gob.RegisterName(name, v)
 }
 
+func safeGobRegister(v any) {
+	defer func() {
+		if recover() != nil {
+			// Ignore duplicate gob registration from mixed legacy/new package paths.
+		}
+	}()
+
+	gob.Register(v)
+}
+
 func init() {
-	gob.Register(FirecrackerConfig{})
+	safeGobRegister(FirecrackerConfig{})
 	registerLegacyGobAlias(FirecrackerConfig{})
 }

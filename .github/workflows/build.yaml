@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   unikctl:
-    container: unikctl.sh/myself-full:latest
+    container: ghcr.io/vizvasanlya/unikctl/myself-full:latest
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

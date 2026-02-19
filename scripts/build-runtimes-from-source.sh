@@ -52,6 +52,27 @@ TMP_DIR="$(mktemp -d)"
 cleanup() { rm -rf "$TMP_DIR"; }
 trap cleanup EXIT INT TERM
 
+stage_local_runtime() {
+  local runtime="$1"
+  local source_dir="$2"
+  local staged_dir="${TMP_DIR}/${runtime}-local"
+
+  if [ ! -d "$source_dir" ]; then
+    return 1
+  fi
+
+  rm -rf "$staged_dir"
+  mkdir -p "$staged_dir"
+  cp -a "${source_dir}/." "$staged_dir/"
+
+  if [ "$APPLY_BANNER_PATCH" = "true" ]; then
+    "${ROOT_DIR}/scripts/patch-runtime-banner.sh" "$staged_dir"
+  fi
+
+  printf "%s\n" "$staged_dir"
+  return 0
+}
+
 IFS=',' read -r -a RUNTIME_LIST <<<"$RUNTIMES_CSV"
 
 echo "runtime source build config:"
@@ -77,36 +98,74 @@ for runtime in "${RUNTIME_LIST[@]}"; do
   repo="${!repo_var:-$default_repo}"
   ref="${!ref_var:-$SOURCE_REF}"
   subdir="${!subdir_var:-runtimes/${runtime}}"
+  local_runtime_dir="${ROOT_DIR}/runtimes/${runtime}"
 
-  src_dir="${TMP_DIR}/${runtime}"
+  src_dir="${TMP_DIR}/${runtime}-repo"
+  workdir=""
   echo "==> runtime=${runtime}"
   echo "    repo=${repo}"
   echo "    ref=${ref}"
 
+  if [ "$repo" = "." ] || [ "$repo" = "local" ]; then
+    staged_local="$(stage_local_runtime "$runtime" "$local_runtime_dir" || true)"
+    if [ -n "$staged_local" ] && [ -d "$staged_local" ]; then
+      echo "    source=local (${local_runtime_dir})"
+      workdir="$staged_local"
+    fi
+  fi
+
+  if [ -z "$workdir" ] && [ -d "$repo" ] && [ -d "$repo/$subdir" ]; then
+    staged_local="$(stage_local_runtime "$runtime" "$repo/$subdir" || true)"
+    if [ -n "$staged_local" ] && [ -d "$staged_local" ]; then
+      echo "    source=local-repo (${repo}/${subdir})"
+      workdir="$staged_local"
+    fi
+  fi
+
+  if [ -n "$workdir" ] && [ ! -d "$workdir" ]; then
+    echo "error: staged local runtime directory does not exist: $workdir" >&2
+    exit 1
+  fi
+
+  if [ -z "$workdir" ]; then
   clone_repo="$repo"
   if [[ "$repo" =~ ^https://github.com/ ]] && [[ "$repo" != *"@"* ]] && [ -n "${GIT_AUTH_TOKEN:-}" ]; then
     clone_repo="${repo/https:\/\/github.com\//https:\/\/x-access-token:${GIT_AUTH_TOKEN}@github.com\/}"
   fi
 
-  if ! git clone --depth 1 --branch "$ref" "$clone_repo" "$src_dir"; then
-    if [ "$repo" = "." ] || [ -d "$repo/.git" ]; then
+    if ! git clone --depth 1 --branch "$ref" "$clone_repo" "$src_dir"; then
+      if [ -d "$local_runtime_dir" ]; then
+        echo "warning: clone failed for ${repo}@${ref}; falling back to in-repo runtime source ${local_runtime_dir}" >&2
+        staged_local="$(stage_local_runtime "$runtime" "$local_runtime_dir" || true)"
+        if [ -z "$staged_local" ] || [ ! -d "$staged_local" ]; then
+          echo "error: failed to stage local runtime source fallback: ${local_runtime_dir}" >&2
+          exit 1
+        fi
+        workdir="$staged_local"
+      elif [ "$repo" = "." ] || [ -d "$repo/.git" ]; then
       # Local repository sources can be in detached HEAD state in CI.
-      if ! git clone --depth 1 "$clone_repo" "$src_dir"; then
+        if ! git clone --depth 1 "$clone_repo" "$src_dir"; then
         echo "error: failed to clone local runtime repo source '${repo}'" >&2
+        exit 1
+        fi
+        workdir="${src_dir}/${subdir}"
+      else
+        echo "error: failed to clone runtime repo '${repo}' at ref '${ref}'" >&2
+        echo "hint: if repo is private, provide GIT_AUTH_TOKEN (PAT with repo read access)" >&2
+        if [ -d "$local_runtime_dir" ]; then
+          echo "hint: local fallback exists at ${local_runtime_dir}; set SOURCE_REPO_TEMPLATE='.' to force in-repo sources" >&2
+        fi
         exit 1
       fi
     else
-      echo "error: failed to clone runtime repo '${repo}' at ref '${ref}'" >&2
-      echo "hint: if repo is private, provide GIT_AUTH_TOKEN (PAT with repo read access)" >&2
-      exit 1
+      workdir="${src_dir}/${subdir}"
     fi
   fi
 
-  if [ "$APPLY_BANNER_PATCH" = "true" ]; then
-    "${ROOT_DIR}/scripts/patch-runtime-banner.sh" "$src_dir"
+  if [ -z "$workdir" ]; then
+    workdir="${src_dir}/${subdir}"
   fi
 
-  workdir="${src_dir}/${subdir}"
   if [ ! -d "$workdir" ]; then
     echo "error: runtime workdir not found: $workdir" >&2
     echo "hint: set ${subdir_var} or arrange runtime sources in one repo, e.g. runtimes/${runtime}" >&2

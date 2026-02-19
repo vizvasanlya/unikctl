@@ -141,6 +141,8 @@ jobs:
           chmod +x scripts/build-runtimes-from-source.sh scripts/patch-runtime-banner.sh scripts/generate-runtime-lock.sh
           export GIT_AUTH_TOKEN="${RUNTIME_REPO_TOKEN:-$GITHUB_TOKEN}"
           ./scripts/build-runtimes-from-source.sh
+          export REQUIRED_RUNTIMES="${RUNTIMES}"
+          export REQUIRE_DIGESTS="true"
           ./scripts/generate-runtime-lock.sh
 
       - name: Upload runtime lock file

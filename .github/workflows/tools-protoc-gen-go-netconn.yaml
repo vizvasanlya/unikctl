@@ -38,7 +38,7 @@ jobs:
   build-protoc:
     runs-on: ubuntu-latest
     needs: go-vars
-    container: unikctl.sh/myself-full:latest
+    container: ghcr.io/vizvasanlya/unikctl/myself-full:latest
     env:
       RUNGOGENERATE: false
     steps:

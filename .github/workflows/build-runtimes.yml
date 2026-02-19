@@ -151,6 +151,8 @@ jobs:
           TARGET_PREFIX: ${{ inputs.target_prefix }}
           TAG: ${{ inputs.tag }}
           RUNTIMES: ${{ inputs.runtimes }}
+          REQUIRED_RUNTIMES: ${{ inputs.runtimes }}
+          REQUIRE_DIGESTS: "true"
           OUTPUT: internal/runtimeutil/runtime-lock.json
         run: |
           chmod +x scripts/generate-runtime-lock.sh

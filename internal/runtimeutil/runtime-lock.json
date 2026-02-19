@@ -4,27 +4,27 @@
     "base": {
       "reference": "ghcr.io/vizvasanlya/unikctl/base",
       "tag": "latest",
-      "digest": "sha256:f2209f5eb8b6cba1481589bc6f68e0edddda52fa2d31118c2ce902fe0c1e33a3"
+      "digest": "sha256:64c95ed0746775a5b02aaeb24d04e80d6551241a3f47a09c673b85ed2e6bd1b0"
     },
     "nodejs": {
       "reference": "ghcr.io/vizvasanlya/unikctl/nodejs",
       "tag": "latest",
-      "digest": ""
+      "digest": "sha256:63807057bcc93fc4f4435c56eec567dc1c12b8b0fb702fcc825b79afaba8089d"
     },
     "python": {
       "reference": "ghcr.io/vizvasanlya/unikctl/python",
       "tag": "latest",
-      "digest": ""
+      "digest": "sha256:9bed568c3ef675df713118cc26633bc815e35ccf31f030712784f1bcebcf29e6"
     },
     "java": {
       "reference": "ghcr.io/vizvasanlya/unikctl/java",
       "tag": "latest",
-      "digest": ""
+      "digest": "sha256:768c115bebb279cf1ba5d590e5334df093246bbf743a628839cd2f5fc691f01d"
     },
     "dotnet": {
       "reference": "ghcr.io/vizvasanlya/unikctl/dotnet",
       "tag": "latest",
-      "digest": ""
+      "digest": "sha256:e2efa2ffb3c55808b85ee5c4ee44862cb457d6851b2d03aaf38a9859cd2aa67d"
     }
   }
 }

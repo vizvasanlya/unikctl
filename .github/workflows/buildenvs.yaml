@@ -18,10 +18,6 @@ on:
       - 'action.yml'
       - '!README.md'
 
-env:
-  REG_USERNAME: ${{ secrets.REG_USERNAME }}
-  REG_TOKEN: ${{ secrets.REG_TOKEN }}
-
 jobs:
   qemu:
     runs-on: ubuntu-latest
@@ -64,12 +60,12 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Login to OCI registry
-        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' && env.REG_USERNAME != '' && env.REG_TOKEN != '' }}
+        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' }}
         uses: docker/login-action@v3
         with:
-          registry: index.unikraft.io
-          username: ${{ secrets.REG_USERNAME }}
-          password: ${{ secrets.REG_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build OCI image
         if: ${{ steps.check-run.outputs.run == 'true' }}
@@ -77,7 +73,7 @@ jobs:
         with:
           push: false
           file: ./buildenvs/qemu.Dockerfile
-          tags: unikctl.sh/qemu:${{ matrix.QEMU_VERSION }}
+          tags: ghcr.io/vizvasanlya/unikctl/qemu:${{ matrix.QEMU_VERSION }}
           platforms: linux/amd64
           secrets: |
             GIT_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }}
@@ -93,11 +89,11 @@ jobs:
           path: /tmp/qemu-${{ matrix.QEMU_VERSION }}.tar
 
       - name: Push OCI Image
-        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' && env.REG_USERNAME != '' && env.REG_TOKEN != '' }}
+        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' }}
         uses: docker/build-push-action@v6
         with:
           push: true
-          tags: index.unikraft.io/unikctl.sh/qemu:${{ matrix.QEMU_VERSION }}
+          tags: ghcr.io/vizvasanlya/unikctl/qemu:${{ matrix.QEMU_VERSION }}
           platforms: linux/amd64
           file: ./buildenvs/qemu.Dockerfile
           secrets: |
@@ -137,12 +133,12 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Login to OCI registry
-        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' && env.REG_USERNAME != '' && env.REG_TOKEN != '' }}
+        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' }}
         uses: docker/login-action@v3
         with:
-          registry: index.unikraft.io
-          username: ${{ secrets.REG_USERNAME }}
-          password: ${{ secrets.REG_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build OCI image
         if: ${{ steps.check-run.outputs.run == 'true' }}
@@ -150,7 +146,7 @@ jobs:
         with:
           push: false
           file: ./buildenvs/xen.Dockerfile
-          tags: unikctl.sh/xen:${{ matrix.XEN_VERSION }}
+          tags: ghcr.io/vizvasanlya/unikctl/xen:${{ matrix.XEN_VERSION }}
           platforms: linux/amd64
           secrets: |
             GIT_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }}
@@ -166,11 +162,11 @@ jobs:
           path: /tmp/xen-${{ matrix.XEN_VERSION }}.tar
 
       - name: Push OCI Image
-        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' && env.REG_USERNAME != '' && env.REG_TOKEN != '' }}
+        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' }}
         uses: docker/build-push-action@v6
         with:
           push: true
-          tags: index.unikraft.io/unikctl.sh/xen:${{ matrix.XEN_VERSION }}
+          tags: ghcr.io/vizvasanlya/unikctl/xen:${{ matrix.XEN_VERSION }}
           platforms: linux/amd64
           file: ./buildenvs/xen.Dockerfile
           secrets: |
@@ -225,21 +221,21 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Login to OCI registry
-        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' && env.REG_USERNAME != '' && env.REG_TOKEN != '' }}
+        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' }}
         uses: docker/login-action@v3
         with:
-          registry: index.unikraft.io
-          username: ${{ secrets.REG_USERNAME }}
-          password: ${{ secrets.REG_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download 'unikctl.sh/qemu' artifacts
+      - name: Download 'ghcr.io/vizvasanlya/unikctl/qemu' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
         uses: actions/download-artifact@v7
         with:
           name: qemu-oci-image
           path: /tmp
 
-      - name: Download 'unikctl.sh/xen' artifacts
+      - name: Download 'ghcr.io/vizvasanlya/unikctl/xen' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
         uses: actions/download-artifact@v7
         with:
@@ -258,7 +254,7 @@ jobs:
           push: false
           load: true
           file: ./buildenvs/myself.Dockerfile
-          tags: unikctl.sh/myself:latest
+          tags: ghcr.io/vizvasanlya/unikctl/myself:latest
           platforms: linux/amd64
           secrets: |
             GIT_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }}
@@ -277,11 +273,11 @@ jobs:
           path: /tmp/myself.tar
 
       - name: Push OCI Image
-        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' && env.REG_USERNAME != '' && env.REG_TOKEN != '' }}
+        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' }}
         uses: docker/build-push-action@v6
         with:
           push: true
-          tags: index.unikraft.io/unikctl.sh/myself:latest
+          tags: ghcr.io/vizvasanlya/unikctl/myself:latest
           platforms: linux/amd64
           file: ./buildenvs/myself.Dockerfile
           secrets: |
@@ -328,28 +324,28 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Login to OCI registry
-        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' && env.REG_USERNAME != '' && env.REG_TOKEN != '' }}
+        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' }}
         uses: docker/login-action@v3
         with:
-          registry: index.unikraft.io
-          username: ${{ secrets.REG_USERNAME }}
-          password: ${{ secrets.REG_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download 'unikctl.sh/myself' artifacts
+      - name: Download 'ghcr.io/vizvasanlya/unikctl/myself' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
         uses: actions/download-artifact@v7
         with:
           name: myself-oci-image
           path: /tmp
 
-      - name: Download 'unikctl.sh/qemu' artifacts
+      - name: Download 'ghcr.io/vizvasanlya/unikctl/qemu' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
         uses: actions/download-artifact@v7
         with:
           name: qemu-oci-image
           path: /tmp
 
-      - name: Download 'unikctl.sh/xen' artifacts
+      - name: Download 'ghcr.io/vizvasanlya/unikctl/xen' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
         uses: actions/download-artifact@v7
         with:
@@ -368,7 +364,7 @@ jobs:
           push: false
           load: true
           file: ./buildenvs/base.Dockerfile
-          tags: unikctl.sh/base:latest
+          tags: ghcr.io/vizvasanlya/unikctl/base:latest
           platforms: linux/amd64
           secrets: |
             GIT_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }}
@@ -384,11 +380,11 @@ jobs:
           path: /tmp/base.tar
 
       - name: Push OCI Image
-        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' && env.REG_USERNAME != '' && env.REG_TOKEN != '' }}
+        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' }}
         uses: docker/build-push-action@v6
         with:
           push: true
-          tags: index.unikraft.io/unikctl.sh/base:latest
+          tags: ghcr.io/vizvasanlya/unikctl/base:latest
           platforms: linux/amd64
           file: ./buildenvs/base.Dockerfile
           secrets: |
@@ -426,28 +422,28 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Login to OCI registry
-        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' && env.REG_USERNAME != '' && env.REG_TOKEN != '' }}
+        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' }}
         uses: docker/login-action@v3
         with:
-          registry: index.unikraft.io
-          username: ${{ secrets.REG_USERNAME }}
-          password: ${{ secrets.REG_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download 'unikctl.sh/myself' artifacts
+      - name: Download 'ghcr.io/vizvasanlya/unikctl/myself' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
         uses: actions/download-artifact@v7
         with:
           name: myself-oci-image
           path: /tmp
 
-      - name: Download 'unikctl.sh/qemu' artifacts
+      - name: Download 'ghcr.io/vizvasanlya/unikctl/qemu' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
         uses: actions/download-artifact@v7
         with:
           name: qemu-oci-image
           path: /tmp
 
-      - name: Download 'unikctl.sh/xen' artifacts
+      - name: Download 'ghcr.io/vizvasanlya/unikctl/xen' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
         uses: actions/download-artifact@v7
         with:
@@ -466,7 +462,7 @@ jobs:
           push: false
           load: true
           file: ./buildenvs/base-golang.Dockerfile
-          tags: unikctl.sh/base-golang:latest
+          tags: ghcr.io/vizvasanlya/unikctl/base-golang:latest
           platforms: linux/amd64
           secrets: |
             GIT_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }}
@@ -482,11 +478,11 @@ jobs:
           path: /tmp/base-golang.tar
 
       - name: Push OCI Image
-        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' && env.REG_USERNAME != '' && env.REG_TOKEN != '' }}
+        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' }}
         uses: docker/build-push-action@v6
         with:
           push: true
-          tags: index.unikraft.io/unikctl.sh/base-golang:latest
+          tags: ghcr.io/vizvasanlya/unikctl/base-golang:latest
           platforms: linux/amd64
           file: ./buildenvs/base-golang.Dockerfile
           secrets: |
@@ -540,14 +536,14 @@ jobs:
         with:
           driver: docker
 
-      - name: Download 'unikctl.sh/myself' artifacts
+      - name: Download 'ghcr.io/vizvasanlya/unikctl/myself' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
         uses: actions/download-artifact@v7
         with:
           name: myself-oci-image
           path: /tmp
 
-      - name: Download 'unikctl.sh/qemu' artifacts
+      - name: Download 'ghcr.io/vizvasanlya/unikctl/qemu' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
         uses: actions/download-artifact@v7
         with:
@@ -560,19 +556,19 @@ jobs:
           for I in /tmp/*.tar; do docker load --input "${I}"; done
 
       - name: Login to Registry
-        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' && env.REG_USERNAME != '' && env.REG_TOKEN != '' }}
+        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' }}
         uses: docker/login-action@v3
         with:
-          registry: index.unikraft.io
-          username: ${{ secrets.REG_USERNAME }}
-          password: ${{ secrets.REG_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build OCI Image
         if: ${{ steps.check-run.outputs.run == 'true' }}
         uses: docker/build-push-action@v6
         with:
           push: false
-          tags: unikctl.sh/github-action:v0
+          tags: ghcr.io/vizvasanlya/unikctl/github-action:v0
           platforms: linux/amd64
           file: ./buildenvs/github-action.Dockerfile
           secrets: |
@@ -601,11 +597,11 @@ jobs:
           execute: true
 
       - name: Push OCI Image
-        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' && env.REG_USERNAME != '' && env.REG_TOKEN != '' }}
+        if: ${{ steps.check-run.outputs.run == 'true' && github.event_name == 'push' }}
         uses: docker/build-push-action@v6
         with:
           push: true
-          tags: index.unikraft.io/unikctl.sh/github-action:v0
+          tags: ghcr.io/vizvasanlya/unikctl/github-action:v0
           platforms: linux/amd64
           file: ./buildenvs/github-action.Dockerfile
           secrets: |

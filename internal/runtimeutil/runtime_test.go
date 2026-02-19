@@ -41,3 +41,16 @@ func TestCandidatesWithoutLockStillResolvable(t *testing.T) {
 		}
 	}
 }
+
+func TestCoreRuntimeDigestLocksPresent(t *testing.T) {
+	coreRuntimes := []string{"base", "nodejs", "python", "java", "dotnet"}
+	for _, runtime := range coreRuntimes {
+		ref, ok := lockedReferenceFor(runtime, "latest")
+		if !ok {
+			t.Fatalf("expected digest lock for runtime %q", runtime)
+		}
+		if ref.Digest == "" {
+			t.Fatalf("runtime %q has empty digest lock", runtime)
+		}
+	}
+}

@@ -75,12 +75,17 @@ You can build and publish runtimes from source (not mirroring) with:
 ./scripts/build-runtimes-from-source.sh
 ```
 
+By default, runtime builds use the in-repo runtime sources in `runtimes/*`.
+If an external runtime repo input is misconfigured or unavailable, the build script falls back to local sources automatically when available.
+
 GitHub Actions workflow for source builds:
 - `.github/workflows/build-runtimes.yml`
 - `.github/workflows/runtime-quality.yml`
 
 Digest lock file used by runtime resolution:
 - `internal/runtimeutil/runtime-lock.json`
+
+Lock generation enforces non-empty digests for core runtimes (`base,nodejs,python,java,dotnet`) so release deployments do not depend on floating tags.
 
 Runtime source layout options:
 - Multi-repo: one runtime source repo per image (`base`, `nodejs`, `python`, `java`, `dotnet`)

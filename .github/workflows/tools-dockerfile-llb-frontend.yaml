@@ -24,16 +24,16 @@ jobs:
         if: ${{ github.event_name == 'push' }}
         uses: docker/login-action@v3
         with:
-          registry: index.unikraft.io
-          username: ${{ secrets.REG_USERNAME }}
-          password: ${{ secrets.REG_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build OCI image for the LLB plugin
         uses: docker/build-push-action@v6
         with:
           context: ./tools/dockerfile-llb-frontend
           file: ./tools/dockerfile-llb-frontend/Dockerfile
-          tags: index.unikraft.io/unikctl.sh/llb:latest
+          tags: ghcr.io/vizvasanlya/unikctl/llb:latest
           push: ${{ github.event_name == 'push' }}
           platforms: linux/amd64
           cache-from: type=gha

@@ -22,8 +22,18 @@ func hiddenFlag(flag *pflag.Flag) *pflag.Flag {
 }
 
 func registerGob(v any) {
-	gob.Register(v)
+	safeGobRegister(v)
 	registerLegacyGobAlias(v)
+}
+
+func safeGobRegister(v any) {
+	defer func() {
+		if recover() != nil {
+			// Ignore duplicate gob registration when legacy/new package paths coexist.
+		}
+	}()
+
+	gob.Register(v)
 }
 
 func registerLegacyGobAlias(v any) {

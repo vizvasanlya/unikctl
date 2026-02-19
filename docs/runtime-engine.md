@@ -39,6 +39,11 @@ cd /path/to/unikctl-rebrand
 ./scripts/generate-runtime-lock.sh
 ```
 
+Notes:
+- Runtime source build defaults to in-repo runtime directories (`runtimes/base`, `runtimes/nodejs`, `runtimes/python`, `runtimes/java`, `runtimes/dotnet`).
+- If external runtime source inputs are wrong or unavailable, the build script falls back to in-repo runtime sources when present.
+- Lock generation fails if required runtime digests are missing, preventing incomplete lockfiles from being committed.
+
 GitHub Actions:
 - `.github/workflows/build-runtimes.yml`
 - `.github/workflows/publish-runtimes.yml`
