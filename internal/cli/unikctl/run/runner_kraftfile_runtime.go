@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -17,6 +18,7 @@ import (
 	machineapi "unikctl.sh/api/machine/v1alpha1"
 	volumeapi "unikctl.sh/api/volume/v1alpha1"
 	"unikctl.sh/config"
+	"unikctl.sh/initrd"
 	"unikctl.sh/internal/runtimeutil"
 	"unikctl.sh/log"
 	"unikctl.sh/pack"
@@ -380,6 +382,12 @@ func (runner *runnerKraftfileRuntime) Prepare(ctx context.Context, opts *RunOpti
 	if opts.Rootfs == "" {
 		if runner.project.Rootfs() != "" {
 			opts.Rootfs = runner.project.Rootfs()
+		} else if nativeRootfs := detectNativeSourceRootfs(opts.workdir); nativeRootfs != "" {
+			opts.Rootfs = nativeRootfs
+			if opts.RootfsType == "" {
+				opts.RootfsType = initrd.FsTypeCpio
+			}
+			log.G(ctx).WithField("rootfs", opts.Rootfs).Info("using native source pipeline rootfs")
 		} else if runtime.Initrd() != nil {
 			machine.Status.InitrdPath, err = runtime.Initrd().Build(ctx)
 			if err != nil {
@@ -397,6 +405,9 @@ func (runner *runnerKraftfileRuntime) Prepare(ctx context.Context, opts *RunOpti
 
 			machine.Spec.ApplicationArgs = runtime.Initrd().Args()
 		}
+	}
+	if opts.Rootfs != "" && opts.RootfsType == "" {
+		opts.RootfsType = initrd.FsTypeCpio
 	}
 
 	if len(runner.args) > 0 {
@@ -459,6 +470,15 @@ func isPreferredRuntimePlatform(platform string) bool {
 	default:
 		return false
 	}
+}
+
+func detectNativeSourceRootfs(workdir string) string {
+	candidate := filepath.Join(workdir, ".unikctl", "native", "rootfs")
+	info, err := os.Stat(candidate)
+	if err != nil || !info.IsDir() {
+		return ""
+	}
+	return candidate
 }
 
 func selectPreferredPackage(packs []pack.Package) pack.Package {
