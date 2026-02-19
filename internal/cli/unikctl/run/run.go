@@ -75,6 +75,7 @@ type RunOptions struct {
 	machineController machineapi.MachineService
 	hostPlatform      mplatform.Platform
 	hostMode          mplatform.SystemMode
+	rootfsExplicit    bool
 }
 
 type deployProjectConfig struct {
@@ -244,6 +245,13 @@ func (opts *RunOptions) Pre(cmd *cobra.Command, _ []string) error {
 			log.G(ctx).Warn("for backwards-compatibility reasons the value of --initrd is set to --rootfs")
 			opts.Rootfs = opts.InitRd
 		}
+	}
+
+	if f := cmd.Flag("rootfs"); f != nil && f.Changed {
+		opts.rootfsExplicit = true
+	}
+	if f := cmd.Flag("initrd"); f != nil && f.Changed {
+		opts.rootfsExplicit = true
 	}
 
 	if opts.Rootfs != "" && !filepath.IsAbs(opts.Rootfs) {
@@ -609,8 +617,12 @@ func (opts *RunOptions) prepareSourceDirectory(ctx context.Context, args []strin
 		opts.Kraftfile = buildOpts.Kraftfile
 	}
 
-	if opts.Rootfs == "" && strings.TrimSpace(buildOpts.Rootfs) != "" {
-		opts.Rootfs = buildOpts.Rootfs
+	if builtRootfs := strings.TrimSpace(buildOpts.Rootfs); builtRootfs != "" {
+		// Always prefer the rootfs synthesized by `build` when deploying source
+		// directories, unless the user explicitly supplied --rootfs.
+		if !opts.rootfsExplicit {
+			opts.Rootfs = builtRootfs
+		}
 	}
 
 	if opts.RootfsType == "" {
