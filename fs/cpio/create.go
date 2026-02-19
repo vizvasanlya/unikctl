@@ -456,6 +456,8 @@ func (c *createOptions) CreateFSFromTar(ctx context.Context, writer *cpio.Writer
 
 // CreateFSFromDirectory creates a CPIO filesystem from an existing directory.
 func (c *createOptions) CreateFSFromDirectory(ctx context.Context, writer *cpio.Writer, source string) error {
+	inodeSeq := &randSeq{}
+
 	// Recursively walk and serialize to the output
 	if err := filepath.WalkDir(source, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -483,6 +485,13 @@ func (c *createOptions) CreateFSFromDirectory(ctx context.Context, writer *cpio.
 
 			// Populate platform specific information
 			FileInfoToCPIOHeader(info, header)
+			header.Inode = int64(inodeSeq.Int32())
+			header.DeviceID = 0
+			header.Links = 1
+			if c.opts.allRoot {
+				header.Uid = 0
+				header.Guid = 0
+			}
 
 			if err := writer.WriteHeader(header); err != nil {
 				return fmt.Errorf("could not write CPIO header: %w", err)
@@ -529,7 +538,7 @@ func (c *createOptions) CreateFSFromDirectory(ctx context.Context, writer *cpio.
 			// Normalize regular files to standalone entries. Some userland package
 			// layouts contain hardlink metadata that can confuse boot-time CPIO
 			// extractors; serializing each file independently is more robust.
-			header.Inode = 0
+			header.Inode = int64(inodeSeq.Int32())
 			header.DeviceID = 0
 			header.Links = 1
 			header.Size = int64(len(data))
@@ -538,7 +547,7 @@ func (c *createOptions) CreateFSFromDirectory(ctx context.Context, writer *cpio.
 
 		case info.Mode()&fs.ModeSymlink != 0:
 			// Symlink payload must match target length.
-			header.Inode = 0
+			header.Inode = int64(inodeSeq.Int32())
 			header.DeviceID = 0
 			header.Links = 1
 			header.Mode |= cpio.TypeSymlink
