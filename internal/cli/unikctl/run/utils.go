@@ -631,6 +631,12 @@ func (opts *RunOptions) prepareRootfs(ctx context.Context, machine *machineapi.M
 		fmt.Sprintf(initrd.DefaultInitramfsArchFileName, machine.Spec.Architecture, opts.RootfsType),
 	)
 
+	log.G(ctx).WithFields(map[string]interface{}{
+		"rootfs_source": opts.Rootfs,
+		"rootfs_output": machine.Status.InitrdPath,
+		"rootfs_type":   opts.RootfsType,
+	}).Info("preparing rootfs archive")
+
 	ramfs, err := initrd.New(ctx,
 		opts.Rootfs,
 		initrd.WithOutput(machine.Status.InitrdPath),
