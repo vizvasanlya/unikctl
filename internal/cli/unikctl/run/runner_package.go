@@ -330,9 +330,27 @@ func (runner *runnerPackage) Prepare(ctx context.Context, opts *RunOptions, mach
 	if opts.Rootfs == "" && targ.Initrd() != nil {
 		ramfs = targ.Initrd()
 	} else if len(opts.Rootfs) > 0 {
+		rootfsType := opts.RootfsType
+		if rootfsType == "" {
+			rootfsType = initrd.FsTypeCpio
+			opts.RootfsType = rootfsType
+		}
+
+		initrdOutput := filepath.Join(
+			opts.workdir,
+			unikraft.BuildDir,
+			fmt.Sprintf(initrd.DefaultInitramfsArchFileName, machine.Spec.Architecture, rootfsType),
+		)
+		log.G(ctx).WithFields(map[string]interface{}{
+			"rootfs_source": opts.Rootfs,
+			"rootfs_output": initrdOutput,
+			"rootfs_type":   rootfsType,
+		}).Info("preparing rootfs archive")
+
 		ramfs, err = initrd.New(ctx, opts.Rootfs,
 			initrd.WithWorkdir(opts.workdir),
-			initrd.WithOutputType(opts.RootfsType),
+			initrd.WithOutput(initrdOutput),
+			initrd.WithOutputType(rootfsType),
 		)
 		if err != nil {
 			return err

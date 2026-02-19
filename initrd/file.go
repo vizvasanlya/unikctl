@@ -66,8 +66,23 @@ func (initrd *file) Name() string {
 
 // Build implements Initrd.
 func (initrd *file) Build(ctx context.Context) (string, error) {
+	if initrd.opts.output == "" {
+		fi, err := os.CreateTemp("", "")
+		if err != nil {
+			return "", fmt.Errorf("could not make temporary file: %w", err)
+		}
+		initrd.opts.output = fi.Name()
+		if err := fi.Close(); err != nil {
+			return "", fmt.Errorf("could not close temporary file: %w", err)
+		}
+	}
+
 	if initrd.opts.output == initrd.path {
 		return "", fmt.Errorf("CPIO archive path is the same as the source path, this is not allowed as it creates corrupted archives")
+	}
+
+	if err := os.MkdirAll(filepath.Dir(initrd.opts.output), 0o755); err != nil {
+		return "", fmt.Errorf("could not create output directory: %w", err)
 	}
 
 	switch initrd.opts.fsType {
