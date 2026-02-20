@@ -20,7 +20,6 @@ import (
 
 	"unikctl.sh/config"
 	"unikctl.sh/internal/set"
-	"unikctl.sh/machine/firecracker"
 	"unikctl.sh/machine/qemu"
 )
 
@@ -224,6 +223,6 @@ func Detect(ctx context.Context) (Platform, SystemMode, error) {
 }
 
 func firecrackerAvailable() bool {
-	_, err := exec.LookPath(firecracker.FirecrackerBin)
+	_, err := exec.LookPath("firecracker")
 	return err == nil
 }
