@@ -84,7 +84,7 @@ func newDensityCmd() *cobra.Command {
 	return cmd
 }
 
-func (opts *densityOptions) Pre(cmd *cobra.Command, []string) error {
+func (opts *densityOptions) Pre(cmd *cobra.Command, _ []string) error {
 	switch strings.ToLower(strings.TrimSpace(opts.Output)) {
 	case "table", "json", "yaml", "list":
 		opts.Output = strings.ToLower(strings.TrimSpace(opts.Output))
