@@ -20,6 +20,7 @@ import (
 
 	"unikctl.sh/config"
 	"unikctl.sh/internal/set"
+	"unikctl.sh/machine/firecracker"
 	"unikctl.sh/machine/qemu"
 )
 
@@ -135,6 +136,9 @@ func Detect(ctx context.Context) (Platform, SystemMode, error) {
 		contents, err := readLines(file)
 		if err == nil {
 			if set.NewStringSet(contents...).Contains("kvm") {
+				if firecrackerAvailable() {
+					return PlatformFirecracker, SystemHost, nil
+				}
 				return PlatformKVM, SystemHost, nil
 				// } else if set.NewStringSet(contents...).Contains("hv_util") {
 				// 	return HypervisorHyperV, SystemGuest, nil
@@ -186,6 +190,9 @@ func Detect(ctx context.Context) (Platform, SystemMode, error) {
 				return PlatformUnknown, SystemUnknown, fmt.Errorf("kvm version too old, or malformed, should be 12, but is %d", version)
 			}
 
+			if firecrackerAvailable() {
+				return PlatformFirecracker, SystemHost, nil
+			}
 			return PlatformKVM, SystemHost, nil
 		} else {
 			return PlatformUnknown, SystemUnknown, fmt.Errorf("kvm exists but is not a character device")
@@ -214,4 +221,9 @@ func Detect(ctx context.Context) (Platform, SystemMode, error) {
 	}
 
 	return PlatformUnknown, SystemUnknown, fmt.Errorf("could not determine hypervisor and system mode")
+}
+
+func firecrackerAvailable() bool {
+	_, err := exec.LookPath(firecracker.FirecrackerBin)
+	return err == nil
 }

@@ -122,7 +122,7 @@ func (runner *runnerLinuxu) Runnable(ctx context.Context, opts *RunOptions, args
 // Prepare implements Runner.
 func (runner *runnerLinuxu) Prepare(ctx context.Context, opts *RunOptions, machine *machineapi.Machine, args ...string) error {
 	if opts.Platform == "" {
-		opts.Platform = "qemu"
+		opts.Platform = "auto"
 	}
 
 	if opts.Platform == "" || opts.Platform == "auto" {

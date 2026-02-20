@@ -6,6 +6,8 @@ package volume
 
 import (
 	"context"
+	"sort"
+	"strings"
 
 	volumev1alpha1 "unikctl.sh/api/volume/v1alpha1"
 	"unikctl.sh/kconfig"
@@ -22,7 +24,20 @@ var strategies = make(map[string]*Strategy)
 
 // DefaultStrategyName return the name of the default strategy of the platform.
 func DefaultStrategyName() string {
-	return defaultStrategyName
+	candidate := strings.TrimSpace(defaultStrategyName)
+	if candidate != "" {
+		if _, ok := Strategies()[candidate]; ok {
+			return candidate
+		}
+	}
+
+	names := DriverNames()
+	sort.Strings(names)
+	if len(names) == 0 {
+		return ""
+	}
+
+	return names[0]
 }
 
 // Strategy represents canonical reference of a machine driver and their

@@ -8,6 +8,9 @@ It provides a simple product surface:
 - `unikctl logs`
 - `unikctl status`
 - `unikctl destroy`
+- `unikctl inspect`
+- `unikctl bench density`
+- `unikctl bench boot`
 
 Default behavior is optimized for production (`release` mode). Use `--debug` when you need symbols and tracing.
 
@@ -52,6 +55,17 @@ unikctl logs <app-name>
 ### 5) Destroy
 ```sh
 unikctl destroy <app-name>
+```
+
+### 6) Inspect Runtime Allocation/Snapshot State
+```sh
+unikctl inspect <app-name>
+```
+
+### 7) Benchmark Helpers
+```sh
+unikctl bench density
+unikctl bench boot
 ```
 
 ## Build Modes
@@ -138,6 +152,9 @@ Use `doctor` to validate host prerequisites:
 ```sh
 unikctl doctor
 ```
+
+Detailed Windows + WSL self-test guide:
+- `docs/wsl-self-test-guide.md`
 
 ## Repository Layout
 

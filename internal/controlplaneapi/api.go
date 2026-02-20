@@ -8,6 +8,7 @@ import "time"
 type DeployRequest struct {
 	Args               []string `json:"args"`
 	Debug              bool     `json:"debug,omitempty"`
+	CPU                string   `json:"cpu,omitempty"`
 	Memory             string   `json:"memory,omitempty"`
 	Name               string   `json:"name,omitempty"`
 	Rootfs             string   `json:"rootfs,omitempty"`
@@ -27,6 +28,7 @@ type DeployRequest struct {
 	MaxUnavailable     int      `json:"max_unavailable,omitempty"`
 	MaxSurge           int      `json:"max_surge,omitempty"`
 	CanaryPercent      int      `json:"canary_percent,omitempty"`
+	Tenant             string   `json:"tenant,omitempty"`
 	HealthCheck        struct {
 		Path            string `json:"path,omitempty"`
 		Port            int    `json:"port,omitempty"`
@@ -96,6 +98,25 @@ type StatusResponse struct {
 	Services   []Service   `json:"services"`
 }
 
+type InspectResponse struct {
+	ID            string    `json:"id,omitempty"`
+	Name          string    `json:"name"`
+	Node          string    `json:"node,omitempty"`
+	State         string    `json:"state"`
+	Driver        string    `json:"driver,omitempty"`
+	Architecture  string    `json:"architecture,omitempty"`
+	Kernel        string    `json:"kernel,omitempty"`
+	Args          string    `json:"args,omitempty"`
+	CPURequest    string    `json:"cpu_request,omitempty"`
+	MemoryRequest string    `json:"memory_request,omitempty"`
+	CreatedAt     time.Time `json:"created_at,omitempty"`
+	Ports         string    `json:"ports,omitempty"`
+	SnapshotState string    `json:"snapshot_state,omitempty"`
+	SnapshotPath  string    `json:"snapshot_path,omitempty"`
+	SnapshotMem   string    `json:"snapshot_mem,omitempty"`
+	SnapshotMeta  string    `json:"snapshot_meta,omitempty"`
+}
+
 type Service struct {
 	Name        string    `json:"name"`
 	Strategy    string    `json:"strategy,omitempty"`
@@ -162,4 +183,25 @@ type NodeActionResponse struct {
 	Message  string `json:"message,omitempty"`
 	Migrated int    `json:"migrated,omitempty"`
 	Failed   int    `json:"failed,omitempty"`
+}
+
+type TenantUtilization struct {
+	Tenant       string `json:"tenant"`
+	Instances    int64  `json:"instances"`
+	CPUMilli     int64  `json:"cpu_milli"`
+	MemoryBytes  int64  `json:"memory_bytes"`
+	ActualRSS    int64  `json:"actual_rss_bytes,omitempty"`
+	HostOverhead int64  `json:"host_overhead_bytes,omitempty"`
+}
+
+type SubstrateStatusResponse struct {
+	DriverDefault          string              `json:"driver_default"`
+	SnapshotFastPath       bool                `json:"snapshot_fast_path_enabled"`
+	WarmPoolSize           int                 `json:"warm_pool_size"`
+	AverageColdBootMillis  float64             `json:"average_cold_boot_millis"`
+	AverageResumeMillis    float64             `json:"average_resume_millis"`
+	ObservedDensity        float64             `json:"observed_density"`
+	TheoreticalDensity     float64             `json:"theoretical_density,omitempty"`
+	PerTenantUtilization   []TenantUtilization `json:"per_tenant_utilization"`
+	DriverOverheadAverages map[string]int64    `json:"driver_overhead_avg_bytes,omitempty"`
 }

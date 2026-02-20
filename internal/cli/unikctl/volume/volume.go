@@ -7,6 +7,7 @@ package volume
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -21,7 +22,7 @@ import (
 )
 
 type Volume struct {
-	Driver string `local:"false" long:"driver" short:"d" usage:"Set the volume driver." default:"9pfs"`
+	Driver string `local:"false" long:"driver" short:"d" usage:"Set the volume driver."`
 }
 
 func NewCmd() *cobra.Command {
@@ -48,7 +49,10 @@ func NewCmd() *cobra.Command {
 
 func (opts *Volume) Pre(cmd *cobra.Command, _ []string) error {
 	if opts.Driver == "" {
-		return fmt.Errorf("volume driver must be set")
+		opts.Driver = strings.TrimSpace(volume.DefaultStrategyName())
+	}
+	if opts.Driver == "" {
+		return fmt.Errorf("volume driver must be set (no compatible volume drivers available)")
 	} else if !set.NewStringSet(volume.DriverNames()...).Contains(opts.Driver) {
 		return fmt.Errorf("unsupported volume driver strategy: %s", opts.Driver)
 	}

@@ -287,6 +287,7 @@ func (runner *runnerKraftfileRuntime) Prepare(ctx context.Context, opts *RunOpti
 			found = compatible[0]
 		} else { // More than 1 match found, pick a deterministic preferred package.
 			found = selectPreferredPackage(compatible)
+			warnIfQEMUSelectedWhileFirecrackerAvailable(ctx, found, compatible)
 			log.G(ctx).WithFields(map[string]interface{}{
 				"runtime":    formatRuntimeLookupCandidate(resolvedRuntime),
 				"platform":   found.(target.Target).Platform().String(),
@@ -487,9 +488,9 @@ func selectPreferredPackage(packs []pack.Package) pack.Package {
 	}
 
 	platformRank := map[string]int{
-		"qemu":        0,
-		"firecracker": 1,
-		"fc":          1,
+		"firecracker": 0,
+		"fc":          0,
+		"qemu":        1,
 		"xen":         2,
 	}
 
@@ -530,9 +531,9 @@ func selectPreferredTarget(targets []target.Target) target.Target {
 	}
 
 	platformRank := map[string]int{
-		"qemu":        0,
-		"firecracker": 1,
-		"fc":          1,
+		"firecracker": 0,
+		"fc":          0,
+		"qemu":        1,
 		"xen":         2,
 	}
 
@@ -623,4 +624,38 @@ func formatRuntimeLookupCandidate(candidate runtimeutil.Reference) string {
 		return "-"
 	}
 	return value
+}
+
+func warnIfQEMUSelectedWhileFirecrackerAvailable(ctx context.Context, selected pack.Package, candidates []pack.Package) {
+	if selected == nil {
+		return
+	}
+
+	selectedTarget, ok := selected.(target.Target)
+	if !ok {
+		return
+	}
+
+	selectedPlatform := strings.ToLower(strings.TrimSpace(selectedTarget.Platform().String()))
+	if selectedPlatform != "qemu" {
+		return
+	}
+
+	firecrackerAvailable := false
+	for _, candidate := range candidates {
+		targetCandidate, ok := candidate.(target.Target)
+		if !ok {
+			continue
+		}
+
+		platform := strings.ToLower(strings.TrimSpace(targetCandidate.Platform().String()))
+		if platform == "firecracker" || platform == "fc" {
+			firecrackerAvailable = true
+			break
+		}
+	}
+
+	if firecrackerAvailable {
+		log.G(ctx).Warn("qemu runtime selected even though a firecracker runtime is available; check explicit platform/runtime constraints")
+	}
 }

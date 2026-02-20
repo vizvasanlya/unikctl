@@ -15,4 +15,10 @@ type FirecrackerConfig struct {
 	// TODO(craciunouc): This is a temporary solution until we have proper
 	// un/marshalling of the resources (and all structures).
 	Memory string `json:"memory,omitempty"`
+	CPU    string `json:"cpu,omitempty"`
+
+	// Snapshot metadata paths for pause/restore lifecycle operations.
+	SnapshotPath string `json:"snapshotPath,omitempty"`
+	SnapshotMem  string `json:"snapshotMem,omitempty"`
+	SnapshotMeta string `json:"snapshotMeta,omitempty"`
 }

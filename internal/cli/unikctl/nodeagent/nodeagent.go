@@ -219,8 +219,6 @@ func collectNodeUsage(ctx context.Context) (int64, int64, int) {
 
 		if qty, ok := machine.Spec.Resources.Requests[corev1.ResourceCPU]; ok {
 			usedCPUMilli += qty.MilliValue()
-		} else {
-			usedCPUMilli += 1000
 		}
 	}
 

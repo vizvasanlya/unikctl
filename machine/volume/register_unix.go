@@ -17,7 +17,7 @@ import (
 	"unikctl.sh/store"
 )
 
-var defaultStrategyName = "9pfs"
+var defaultStrategyName = ""
 
 // hostSupportedStrategies returns the map of known supported drivers for the
 // given host.

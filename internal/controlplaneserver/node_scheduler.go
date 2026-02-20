@@ -39,6 +39,10 @@ func (server *Server) selectNodeForDeploy(request *controlplaneapi.DeployRequest
 		return nil, nil
 	}
 
+	if request == nil {
+		request = &controlplaneapi.DeployRequest{}
+	}
+
 	if err := server.nodes.MarkOfflineStale(nodeHeartbeatStaleAfter); err != nil {
 		return nil, err
 	}
@@ -52,13 +56,41 @@ func (server *Server) selectNodeForDeploy(request *controlplaneapi.DeployRequest
 		return nil, nil
 	}
 
-	selector := parseSelector(request.NodeSelector)
-	requestedNode := strings.TrimSpace(request.NodeName)
-	requiredMemoryBytes := requestedMemoryBytes(request)
-	serviceReplicaCounts, err := server.serviceReplicaCountsForRequest(request)
+	effectiveRequest := *request
+	effectiveRequest.NodeSelector = append([]string{}, request.NodeSelector...)
+	if selector := tenantAffinitySelector(server.tenantNodeAffinity, effectiveRequest.Tenant); len(selector) > 0 {
+		effectiveRequest.NodeSelector = append(effectiveRequest.NodeSelector, selector...)
+	}
+
+	serviceReplicaCounts, err := server.serviceReplicaCountsForRequest(&effectiveRequest)
 	if err != nil {
 		return nil, err
 	}
+
+	return selectEligibleNode(nodes, &effectiveRequest, exclude, serviceReplicaCounts)
+}
+
+func selectEligibleNode(nodes []nodeRecord, request *controlplaneapi.DeployRequest, exclude map[string]struct{}, serviceReplicaCounts map[string]int) (*nodeRecord, error) {
+	if request == nil {
+		request = &controlplaneapi.DeployRequest{}
+	}
+
+	if exclude == nil {
+		exclude = map[string]struct{}{}
+	}
+
+	if serviceReplicaCounts == nil {
+		serviceReplicaCounts = map[string]int{}
+	}
+
+	selector := parseSelector(request.NodeSelector)
+	requestedNode := strings.TrimSpace(request.NodeName)
+	tenant := normalizeTenant(request.Tenant)
+	requiredMemoryBytes, requiredCPUMilli, err := parseRequestedResourcesStrict(request)
+	if err != nil {
+		return nil, err
+	}
+	strategy := schedulerStrategyFromEnv()
 	eligible := make([]nodeRecord, 0, len(nodes))
 	for _, node := range nodes {
 		if _, skip := exclude[node.Name]; skip {
@@ -81,9 +113,20 @@ func (server *Server) selectNodeForDeploy(request *controlplaneapi.DeployRequest
 			continue
 		}
 
+		if !nodeAllowsTenant(node, tenant) {
+			continue
+		}
+
 		if requiredMemoryBytes > 0 && node.CapacityMemBytes > 0 {
 			freeMem := node.CapacityMemBytes - node.UsedMemBytes
 			if freeMem < requiredMemoryBytes {
+				continue
+			}
+		}
+
+		if requiredCPUMilli > 0 && node.CapacityCPUMilli > 0 {
+			freeCPU := node.CapacityCPUMilli - node.UsedCPUMilli
+			if freeCPU < requiredCPUMilli {
 				continue
 			}
 		}
@@ -92,11 +135,17 @@ func (server *Server) selectNodeForDeploy(request *controlplaneapi.DeployRequest
 	}
 
 	if requestedNode != "" && len(eligible) == 0 {
-		return nil, fmt.Errorf("requested node %s is not schedulable", requestedNode)
+		return nil, newAdmissionError(
+			"requested_node_unschedulable",
+			fmt.Sprintf("requested node %s is not schedulable for requested resources", requestedNode),
+		)
 	}
 
 	if len(eligible) == 0 {
-		return nil, nil
+		return nil, newAdmissionError(
+			"admission_rejected_capacity",
+			formatCapacityRequirement(requiredMemoryBytes, requiredCPUMilli),
+		)
 	}
 
 	sort.SliceStable(eligible, func(i, j int) bool {
@@ -106,12 +155,17 @@ func (server *Server) selectNodeForDeploy(request *controlplaneapi.DeployRequest
 			return leftReplicas < rightReplicas
 		}
 
-		leftScore := nodeCapacityScore(eligible[i])
-		rightScore := nodeCapacityScore(eligible[j])
+		leftScore := nodeCapacityScore(eligible[i], strategy)
+		rightScore := nodeCapacityScore(eligible[j], strategy)
 		if leftScore == rightScore {
 			return eligible[i].Name < eligible[j].Name
 		}
-		return leftScore > rightScore
+		switch strategy {
+		case schedulerStrategyBinpack:
+			return leftScore < rightScore
+		default:
+			return leftScore > rightScore
+		}
 	})
 
 	chosen := eligible[0]
@@ -175,6 +229,80 @@ func requestedMemoryBytes(request *controlplaneapi.DeployRequest) int64 {
 		return 0
 	}
 	return value
+}
+
+func requestedCPUMilli(request *controlplaneapi.DeployRequest) int64 {
+	if request == nil {
+		return 1000
+	}
+
+	cpu := strings.TrimSpace(request.CPU)
+	if cpu == "" {
+		cpu = "1"
+	}
+
+	quantity, err := resource.ParseQuantity(cpu)
+	if err != nil {
+		return 1000
+	}
+
+	if quantity.MilliValue() <= 0 {
+		return 1000
+	}
+
+	return quantity.MilliValue()
+}
+
+func parseRequestedResourcesStrict(request *controlplaneapi.DeployRequest) (int64, int64, error) {
+	if request == nil {
+		request = &controlplaneapi.DeployRequest{}
+	}
+
+	memoryText := strings.TrimSpace(request.Memory)
+	if memoryText == "" {
+		memoryText = "64Mi"
+	}
+
+	cpuText := strings.TrimSpace(request.CPU)
+	if cpuText == "" {
+		cpuText = "1"
+	}
+
+	memoryQuantity, err := resource.ParseQuantity(memoryText)
+	if err != nil {
+		return 0, 0, newAPIError(
+			400,
+			"invalid_memory_request",
+			fmt.Sprintf("invalid memory request %q: %v", memoryText, err),
+		)
+	}
+
+	cpuQuantity, err := resource.ParseQuantity(cpuText)
+	if err != nil {
+		return 0, 0, newAPIError(
+			400,
+			"invalid_cpu_request",
+			fmt.Sprintf("invalid CPU request %q: %v", cpuText, err),
+		)
+	}
+
+	if memoryQuantity.Value() <= 0 {
+		return 0, 0, newAPIError(
+			400,
+			"invalid_memory_request",
+			"memory request must be greater than zero",
+		)
+	}
+
+	if cpuQuantity.MilliValue() <= 0 {
+		return 0, 0, newAPIError(
+			400,
+			"invalid_cpu_request",
+			"CPU request must be greater than zero",
+		)
+	}
+
+	return memoryQuantity.Value(), cpuQuantity.MilliValue(), nil
 }
 
 func (server *Server) deployToNode(ctx context.Context, node nodeRecord, request *controlplaneapi.DeployRequest) error {
@@ -355,7 +483,29 @@ func nodeMatchesSelector(node nodeRecord, selector map[string]string) bool {
 	return true
 }
 
-func nodeCapacityScore(node nodeRecord) float64 {
+type schedulerStrategy string
+
+const (
+	schedulerStrategySpread         schedulerStrategy = "spread"
+	schedulerStrategyBinpack        schedulerStrategy = "binpack"
+	schedulerStrategyMemoryPriority schedulerStrategy = "memory-priority"
+	schedulerStrategyCPUPriority    schedulerStrategy = "cpu-priority"
+)
+
+func schedulerStrategyFromEnv() schedulerStrategy {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("UNIKCTL_SCHEDULER_STRATEGY"))) {
+	case string(schedulerStrategyBinpack):
+		return schedulerStrategyBinpack
+	case string(schedulerStrategyMemoryPriority):
+		return schedulerStrategyMemoryPriority
+	case string(schedulerStrategyCPUPriority):
+		return schedulerStrategyCPUPriority
+	default:
+		return schedulerStrategySpread
+	}
+}
+
+func nodeCapacityScore(node nodeRecord, strategy schedulerStrategy) float64 {
 	freeCPU := float64(node.CapacityCPUMilli - node.UsedCPUMilli)
 	if freeCPU < 0 {
 		freeCPU = 0
@@ -368,7 +518,105 @@ func nodeCapacityScore(node nodeRecord) float64 {
 
 	cpuWeight := freeCPU
 	memWeight := freeMem / float64(1024*1024)
-	return cpuWeight + memWeight
+
+	switch strategy {
+	case schedulerStrategyMemoryPriority:
+		return memWeight*2 + cpuWeight
+	case schedulerStrategyCPUPriority:
+		return cpuWeight*2 + memWeight
+	case schedulerStrategyBinpack:
+		return cpuWeight + memWeight
+	default: // spread
+		return cpuWeight + memWeight
+	}
+}
+
+func normalizeTenant(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "default"
+	}
+	return strings.ToLower(value)
+}
+
+func nodeAllowsTenant(node nodeRecord, tenant string) bool {
+	if tenant == "" {
+		return true
+	}
+
+	nodeTenant := strings.ToLower(strings.TrimSpace(node.Labels["tenant"]))
+	if nodeTenant == "" || nodeTenant == "shared" {
+		return true
+	}
+
+	return nodeTenant == tenant
+}
+
+func parseTenantNodeAffinity(raw string) (map[string]map[string]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return map[string]map[string]string{}, nil
+	}
+
+	policy := map[string]map[string]string{}
+	for _, entry := range strings.Split(raw, ";") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+
+		tenantRaw, selectorsRaw, ok := strings.Cut(entry, ":")
+		if !ok {
+			return nil, fmt.Errorf("invalid tenant node affinity entry %q: expected tenant:key=value,key=value", entry)
+		}
+
+		tenant := normalizeTenant(tenantRaw)
+		if tenant == "" {
+			return nil, fmt.Errorf("tenant name cannot be empty in node affinity policy")
+		}
+
+		selector := map[string]string{}
+		for _, pair := range strings.Split(selectorsRaw, ",") {
+			pair = strings.TrimSpace(pair)
+			if pair == "" {
+				continue
+			}
+			key, value, ok := strings.Cut(pair, "=")
+			if !ok {
+				return nil, fmt.Errorf("invalid tenant node affinity selector %q for tenant %s", pair, tenant)
+			}
+			key = strings.TrimSpace(key)
+			value = strings.TrimSpace(value)
+			if key == "" || value == "" {
+				return nil, fmt.Errorf("tenant node affinity selectors must include key=value for tenant %s", tenant)
+			}
+			selector[key] = value
+		}
+
+		if len(selector) == 0 {
+			return nil, fmt.Errorf("tenant node affinity for %s must include at least one selector", tenant)
+		}
+		policy[tenant] = selector
+	}
+
+	return policy, nil
+}
+
+func tenantAffinitySelector(policy map[string]map[string]string, tenant string) []string {
+	if len(policy) == 0 {
+		return nil
+	}
+
+	tenant = normalizeTenant(tenant)
+	selector, ok := policy[tenant]
+	if !ok {
+		selector, ok = policy["default"]
+		if !ok {
+			return nil
+		}
+	}
+
+	return labelsToSelector(selector)
 }
 
 func labelsToSelector(labels map[string]string) []string {

@@ -11,11 +11,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/dgraph-io/badger/v3"
+
 	"unikctl.sh/config"
-	"unikctl.sh/internal/lockedfile"
+	"unikctl.sh/internal/walstore"
 )
 
 type Kind string
@@ -41,6 +44,7 @@ type Record struct {
 	State     State     `json:"state"`
 	Targets   []string  `json:"targets,omitempty"`
 	Machine   string    `json:"machine,omitempty"`
+	Tenant    string    `json:"tenant,omitempty"`
 	TraceID   string    `json:"trace_id,omitempty"`
 	IdemKey   string    `json:"idempotency_key,omitempty"`
 	Attempts  int       `json:"attempts,omitempty"`
@@ -52,18 +56,19 @@ type Record struct {
 }
 
 type Store struct {
-	path string
+	backend *walstore.Store
 }
 
 type StartOptions struct {
 	TraceID        string
 	IdempotencyKey string
+	Tenant         string
 }
 
 const (
 	defaultHistoryLimit = 256
 	defaultListLimit    = 30
-	storeFileName       = "operations.json"
+	operationsDBDirName = "operations.db"
 )
 
 func NewStore(ctx context.Context) (*Store, error) {
@@ -76,9 +81,12 @@ func NewStore(ctx context.Context) (*Store, error) {
 		return nil, fmt.Errorf("creating runtime directory: %w", err)
 	}
 
-	return &Store{
-		path: filepath.Join(runtimeDir, storeFileName),
-	}, nil
+	backend, err := walstore.Open(filepath.Join(runtimeDir, operationsDBDirName))
+	if err != nil {
+		return nil, err
+	}
+
+	return &Store{backend: backend}, nil
 }
 
 func (store *Store) Start(kind Kind, targets []string, message string) (*Record, error) {
@@ -95,17 +103,25 @@ func (store *Store) StartIdempotent(kind Kind, targets []string, message string,
 	record := Record{}
 	reused := false
 
-	if err := store.transform(func(records []Record) ([]Record, error) {
+	err := store.backend.Update(func(txn *badger.Txn) error {
 		idemKey := strings.TrimSpace(opts.IdempotencyKey)
 		if idemKey != "" {
-			for _, existing := range records {
-				if existing.Kind != kind || existing.IdemKey != idemKey {
-					continue
-				}
+			var operationID string
+			found, err := walstore.GetJSON(txn, idemIndexKey(kind, idemKey), &operationID)
+			if err != nil {
+				return err
+			}
 
-				record = existing
-				reused = true
-				return records, nil
+			if found && strings.TrimSpace(operationID) != "" {
+				foundRecord, ok, err := getRecordTxn(txn, operationID)
+				if err != nil {
+					return err
+				}
+				if ok {
+					record = foundRecord
+					reused = true
+					return nil
+				}
 			}
 		}
 
@@ -114,20 +130,27 @@ func (store *Store) StartIdempotent(kind Kind, targets []string, message string,
 			Kind:      kind,
 			State:     StatePending,
 			Targets:   append([]string{}, targets...),
+			Tenant:    strings.TrimSpace(opts.Tenant),
 			TraceID:   strings.TrimSpace(opts.TraceID),
-			IdemKey:   idemKey,
+			IdemKey:   strings.TrimSpace(opts.IdempotencyKey),
 			Message:   message,
 			CreatedAt: now,
 			UpdatedAt: now,
 		}
 
-		records = append([]Record{record}, records...)
-		if len(records) > defaultHistoryLimit {
-			records = records[:defaultHistoryLimit]
+		if err := setRecordTxn(txn, record); err != nil {
+			return err
 		}
 
-		return records, nil
-	}); err != nil {
+		if record.IdemKey != "" {
+			if err := walstore.SetJSON(txn, idemIndexKey(kind, record.IdemKey), record.ID); err != nil {
+				return err
+			}
+		}
+
+		return pruneHistoryTxn(txn, defaultHistoryLimit)
+	})
+	if err != nil {
 		return nil, false, err
 	}
 
@@ -173,28 +196,24 @@ func (store *Store) IncrementAttempts(id string, message string) error {
 }
 
 func (store *Store) Get(id string) (*Record, error) {
-	raw, err := lockedfile.Read(store.path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("operation not found: %s", id)
+	record := Record{}
+	ok := false
+	err := store.backend.View(func(txn *badger.Txn) error {
+		found, getErr := walstore.GetJSON(txn, recordKey(id), &record)
+		if getErr != nil {
+			return getErr
 		}
+		ok = found
+		return nil
+	})
+	if err != nil {
 		return nil, fmt.Errorf("reading operation store: %w", err)
 	}
-
-	records, err := decodeRecords(raw)
-	if err != nil {
-		return nil, err
+	if !ok {
+		return nil, fmt.Errorf("operation not found: %s", id)
 	}
 
-	for _, record := range records {
-		if record.ID != id {
-			continue
-		}
-		found := record
-		return &found, nil
-	}
-
-	return nil, fmt.Errorf("operation not found: %s", id)
+	return &record, nil
 }
 
 func (store *Store) List(limit int) ([]Record, error) {
@@ -202,19 +221,25 @@ func (store *Store) List(limit int) ([]Record, error) {
 		limit = defaultListLimit
 	}
 
-	raw, err := lockedfile.Read(store.path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
+	records := []Record{}
+	err := store.backend.View(func(txn *badger.Txn) error {
+		all, listErr := listRecordsTxn(txn)
+		if listErr != nil {
+			return listErr
 		}
-
+		records = all
+		return nil
+	})
+	if err != nil {
 		return nil, fmt.Errorf("reading operation store: %w", err)
 	}
 
-	records, err := decodeRecords(raw)
-	if err != nil {
-		return nil, err
-	}
+	sort.SliceStable(records, func(i, j int) bool {
+		if records[i].UpdatedAt.Equal(records[j].UpdatedAt) {
+			return records[i].CreatedAt.After(records[j].CreatedAt)
+		}
+		return records[i].UpdatedAt.After(records[j].UpdatedAt)
+	})
 
 	if len(records) > limit {
 		records = records[:limit]
@@ -223,73 +248,103 @@ func (store *Store) List(limit int) ([]Record, error) {
 	return records, nil
 }
 
-func (store *Store) append(record Record) error {
-	return store.transform(func(records []Record) ([]Record, error) {
-		records = append([]Record{record}, records...)
-		if len(records) > defaultHistoryLimit {
-			records = records[:defaultHistoryLimit]
-		}
-
-		return records, nil
-	})
-}
-
 func (store *Store) update(id string, updateFn func(record *Record)) error {
-	return store.transform(func(records []Record) ([]Record, error) {
-		for i := range records {
-			if records[i].ID != id {
-				continue
-			}
-
-			updateFn(&records[i])
-			records[i].UpdatedAt = time.Now().UTC()
-			return records, nil
+	return store.backend.Update(func(txn *badger.Txn) error {
+		record, ok, err := getRecordTxn(txn, id)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("operation not found: %s", id)
 		}
 
-		return nil, fmt.Errorf("operation not found: %s", id)
+		updateFn(&record)
+		record.UpdatedAt = time.Now().UTC()
+		return setRecordTxn(txn, record)
 	})
 }
 
-func (store *Store) transform(fn func([]Record) ([]Record, error)) error {
-	if err := os.MkdirAll(filepath.Dir(store.path), 0o755); err != nil {
-		return fmt.Errorf("creating operation store directory: %w", err)
-	}
+func setRecordTxn(txn *badger.Txn, record Record) error {
+	return walstore.SetJSON(txn, recordKey(record.ID), record)
+}
 
-	return lockedfile.Transform(store.path, func(raw []byte) ([]byte, error) {
-		records, err := decodeRecords(raw)
+func getRecordTxn(txn *badger.Txn, id string) (Record, bool, error) {
+	record := Record{}
+	ok, err := walstore.GetJSON(txn, recordKey(id), &record)
+	return record, ok, err
+}
+
+func listRecordsTxn(txn *badger.Txn) ([]Record, error) {
+	records := []Record{}
+	iterator := txn.NewIterator(badger.IteratorOptions{
+		PrefetchValues: true,
+		PrefetchSize:   50,
+	})
+	defer iterator.Close()
+
+	prefix := []byte("op/")
+	for iterator.Seek(prefix); iterator.ValidForPrefix(prefix); iterator.Next() {
+		item := iterator.Item()
+		raw, err := item.ValueCopy(nil)
 		if err != nil {
 			return nil, err
 		}
 
-		updated, err := fn(records)
-		if err != nil {
+		record := Record{}
+		if err := jsonUnmarshal(raw, &record); err != nil {
 			return nil, err
 		}
-
-		return encodeRecords(updated)
-	})
-}
-
-func decodeRecords(raw []byte) ([]Record, error) {
-	if len(strings.TrimSpace(string(raw))) == 0 {
-		return []Record{}, nil
-	}
-
-	var records []Record
-	if err := json.Unmarshal(raw, &records); err != nil {
-		return nil, fmt.Errorf("parsing operation store: %w", err)
+		records = append(records, record)
 	}
 
 	return records, nil
 }
 
-func encodeRecords(records []Record) ([]byte, error) {
-	raw, err := json.MarshalIndent(records, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("serializing operation store: %w", err)
+func pruneHistoryTxn(txn *badger.Txn, keep int) error {
+	if keep <= 0 {
+		return nil
 	}
 
-	return raw, nil
+	records, err := listRecordsTxn(txn)
+	if err != nil {
+		return err
+	}
+
+	sort.SliceStable(records, func(i, j int) bool {
+		if records[i].CreatedAt.Equal(records[j].CreatedAt) {
+			return records[i].ID < records[j].ID
+		}
+		return records[i].CreatedAt.After(records[j].CreatedAt)
+	})
+
+	if len(records) <= keep {
+		return nil
+	}
+
+	for _, stale := range records[keep:] {
+		if err := walstore.Delete(txn, recordKey(stale.ID)); err != nil && err != badger.ErrKeyNotFound {
+			return err
+		}
+		if stale.IdemKey != "" {
+			if err := walstore.Delete(txn, idemIndexKey(stale.Kind, stale.IdemKey)); err != nil && err != badger.ErrKeyNotFound {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func recordKey(id string) string {
+	return "op/" + strings.TrimSpace(id)
+}
+
+func idemIndexKey(kind Kind, idem string) string {
+	return fmt.Sprintf("idem/%s/%s", kind, strings.TrimSpace(idem))
+}
+
+func jsonUnmarshal(raw []byte, out any) error {
+	return json.Unmarshal(raw, out)
 }
 
 func newID() string {

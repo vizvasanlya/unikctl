@@ -6,10 +6,12 @@ package firecracker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	zip "api.zip"
@@ -19,8 +21,6 @@ import (
 	"github.com/fsnotify/fsnotify"
 	goprocess "github.com/shirou/gopsutil/v3/process"
 	"github.com/sirupsen/logrus"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -32,6 +32,7 @@ import (
 	"unikctl.sh/log"
 	"unikctl.sh/machine/name"
 	"unikctl.sh/machine/network/macaddr"
+	"unikctl.sh/machine/resources"
 	"unikctl.sh/unikraft/export/v0/posixenviron"
 	"unikctl.sh/unikraft/export/v0/ukargparse"
 	"unikctl.sh/unikraft/export/v0/uknetdev"
@@ -43,6 +44,24 @@ const (
 	DefaultClientTimout    = time.Second * 5
 	FirecrackerMemoryScale = 1024 * 1024
 )
+
+const (
+	defaultSnapshotStateName = "snapshot.state"
+	defaultSnapshotMemName   = "snapshot.mem"
+	defaultSnapshotMetaName  = "snapshot.json"
+)
+
+type snapshotMetadata struct {
+	Machine        string    `json:"machine"`
+	StatePath      string    `json:"state_path"`
+	MemoryPath     string    `json:"memory_path"`
+	CreatedAt      time.Time `json:"created_at"`
+	SnapshotNanos  int64     `json:"snapshot_nanos"`
+	ResumeNanos    int64     `json:"resume_nanos,omitempty"`
+	Paused         bool      `json:"paused"`
+	ReferenceCount int       `json:"reference_count"`
+	LastUsedAt     time.Time `json:"last_used_at"`
+}
 
 // machineV1alpha1Service ...
 type machineV1alpha1Service struct {
@@ -134,24 +153,13 @@ func (service *machineV1alpha1Service) Create(ctx context.Context, machine *mach
 		}
 	}
 
-	if machine.Spec.Resources.Requests.Memory().Value() == 0 {
-		quantity, err := resource.ParseQuantity("64Mi")
-		if err != nil {
-			machine.Status.State = machinev1alpha1.MachineStateFailed
-			return machine, err
-		}
-
-		machine.Spec.Resources.Requests[corev1.ResourceMemory] = quantity
-	}
-
-	if machine.Spec.Resources.Requests.Cpu().Value() == 0 {
-		quantity, err := resource.ParseQuantity("1")
-		if err != nil {
-			machine.Status.State = machinev1alpha1.MachineStateFailed
-			return machine, err
-		}
-
-		machine.Spec.Resources.Requests[corev1.ResourceCPU] = quantity
+	if err := resources.ApplyDefaultsAndValidate(
+		&machine.Spec.Resources,
+		resources.DefaultCPURequest,
+		resources.DefaultMemoryRequest,
+	); err != nil {
+		machine.Status.State = machinev1alpha1.MachineStateFailed
+		return machine, err
 	}
 
 	fcLogFile := filepath.Join(machine.Status.StateDir, "vmm.log")
@@ -166,6 +174,7 @@ func (service *machineV1alpha1Service) Create(ctx context.Context, machine *mach
 		SocketPath: filepath.Join(machine.Status.StateDir, "vmm.sock"),
 		LogPath:    fcLogFile,
 		Memory:     machine.Spec.Resources.Requests.Memory().String(),
+		CPU:        machine.Spec.Resources.Requests.Cpu().String(),
 	}
 
 	defer func() {
@@ -447,7 +456,19 @@ func (service *machineV1alpha1Service) Start(ctx context.Context, machine *machi
 
 // Pause implements unikctl.sh/api/machine/v1alpha1.MachineService
 func (service *machineV1alpha1Service) Pause(ctx context.Context, machine *machinev1alpha1.Machine) (*machinev1alpha1.Machine, error) {
-	panic("not implemented: unikctl.sh/machine/firecracker.machineV1alpha1Service.Pause")
+	fccfg, err := getFirecrackerConfigFromPlatformConfig(machine.Status.PlatformConfig)
+	if err != nil {
+		return machine, err
+	}
+
+	client := firecracker.NewClient(fccfg.SocketPath, logrus.NewEntry(log.G(ctx)), false)
+	state := models.VMStatePaused
+	if _, err := client.PatchVM(ctx, &models.VM{State: &state}); err != nil {
+		return machine, err
+	}
+
+	machine.Status.State = machinev1alpha1.MachineStatePaused
+	return machine, nil
 }
 
 // Logs implements unikctl.sh/api/machine/v1alpha1.MachineService
@@ -465,18 +486,11 @@ func (service *machineV1alpha1Service) Get(ctx context.Context, machine *machine
 		return machine, err
 	}
 
-	// Set the cpu and memory resources
-	// TODO(craciunouc): This is a temporary solution until we have proper
-	// un/marshalling of the resources (and all structures).
-	machine.Spec.Resources.Requests[corev1.ResourceCPU] = resource.MustParse("1")
-
-	// Backwards compatibility with older runs
-	memory := "0Mi"
-	if fccfg.Memory != "" {
-		memory = fccfg.Memory
+	// Backfill missing requests from platform config without mutating explicit
+	// user-provided resources.
+	if err := resources.BackfillMissingFromPlatform(&machine.Spec.Resources, fccfg.CPU, fccfg.Memory); err != nil {
+		return machine, err
 	}
-
-	machine.Spec.Resources.Requests[corev1.ResourceMemory] = resource.MustParse(memory)
 
 	// Check if the process is alive, which ultimately indicates to us whether we
 	// able to speak to the exposed QMP socket
@@ -598,6 +612,114 @@ func (service *machineV1alpha1Service) Stop(ctx context.Context, machine *machin
 	return machine, nil
 }
 
+// Resume resumes a paused Firecracker microVM.
+func (service *machineV1alpha1Service) Resume(ctx context.Context, machine *machinev1alpha1.Machine) (*machinev1alpha1.Machine, error) {
+	fccfg, err := getFirecrackerConfigFromPlatformConfig(machine.Status.PlatformConfig)
+	if err != nil {
+		return machine, err
+	}
+
+	client := firecracker.NewClient(fccfg.SocketPath, logrus.NewEntry(log.G(ctx)), false)
+	state := models.VMStateResumed
+	startedAt := time.Now().UTC()
+	if _, err := client.PatchVM(ctx, &models.VM{State: &state}); err != nil {
+		return machine, err
+	}
+
+	machine.Status.State = machinev1alpha1.MachineStateRunning
+	if machine.Status.StartedAt.IsZero() {
+		machine.Status.StartedAt = startedAt
+	}
+
+	_ = updateSnapshotResumeLatency(fccfg)
+	return machine, nil
+}
+
+// Snapshot captures a full snapshot and records metadata in the state directory.
+func (service *machineV1alpha1Service) Snapshot(ctx context.Context, machine *machinev1alpha1.Machine) (*machinev1alpha1.Machine, error) {
+	fccfg, err := getFirecrackerConfigFromPlatformConfig(machine.Status.PlatformConfig)
+	if err != nil {
+		return machine, err
+	}
+
+	if err := os.MkdirAll(machine.Status.StateDir, 0o755); err != nil {
+		return machine, err
+	}
+
+	statePath := filepath.Join(machine.Status.StateDir, defaultSnapshotStateName)
+	memPath := filepath.Join(machine.Status.StateDir, defaultSnapshotMemName)
+	metaPath := filepath.Join(machine.Status.StateDir, defaultSnapshotMetaName)
+
+	client := firecracker.NewClient(fccfg.SocketPath, logrus.NewEntry(log.G(ctx)), false)
+	started := time.Now().UTC()
+	params := &models.SnapshotCreateParams{
+		MemFilePath:  firecracker.String(memPath),
+		SnapshotPath: firecracker.String(statePath),
+		SnapshotType: models.SnapshotCreateParamsSnapshotTypeFull,
+	}
+	if _, err := client.CreateSnapshot(ctx, params); err != nil {
+		return machine, err
+	}
+
+	metadata := snapshotMetadata{
+		Machine:        machine.Name,
+		StatePath:      statePath,
+		MemoryPath:     memPath,
+		CreatedAt:      started,
+		SnapshotNanos:  time.Since(started).Nanoseconds(),
+		Paused:         machine.Status.State == machinev1alpha1.MachineStatePaused,
+		ReferenceCount: 1,
+		LastUsedAt:     time.Now().UTC(),
+	}
+	if err := writeSnapshotMetadata(metaPath, metadata); err != nil {
+		return machine, err
+	}
+
+	fccfg.SnapshotPath = statePath
+	fccfg.SnapshotMem = memPath
+	fccfg.SnapshotMeta = metaPath
+	machine.Status.PlatformConfig = fccfg
+	return machine, nil
+}
+
+// Restore restores a Firecracker microVM from a previously captured snapshot.
+func (service *machineV1alpha1Service) Restore(ctx context.Context, machine *machinev1alpha1.Machine) (*machinev1alpha1.Machine, error) {
+	fccfg, err := getFirecrackerConfigFromPlatformConfig(machine.Status.PlatformConfig)
+	if err != nil {
+		return machine, err
+	}
+
+	if strings.TrimSpace(fccfg.SnapshotPath) == "" || strings.TrimSpace(fccfg.SnapshotMem) == "" {
+		return machine, fmt.Errorf("snapshot paths are not configured for machine %s", machine.Name)
+	}
+
+	client := firecracker.NewClient(fccfg.SocketPath, logrus.NewEntry(log.G(ctx)), false)
+	started := time.Now().UTC()
+	params := &models.SnapshotLoadParams{
+		MemFilePath:  firecracker.String(fccfg.SnapshotMem),
+		SnapshotPath: firecracker.String(fccfg.SnapshotPath),
+		ResumeVM:     true,
+	}
+	if _, err := client.LoadSnapshot(ctx, params); err != nil {
+		return machine, err
+	}
+
+	machine.Status.State = machinev1alpha1.MachineStateRunning
+	if machine.Status.StartedAt.IsZero() {
+		machine.Status.StartedAt = started
+	}
+
+	if err := updateSnapshotResumeLatency(fccfg); err != nil {
+		log.G(ctx).WithError(err).Debug("could not update snapshot resume metadata")
+	}
+	return machine, nil
+}
+
+// Inspect refreshes and returns the machine with latest runtime state.
+func (service *machineV1alpha1Service) Inspect(ctx context.Context, machine *machinev1alpha1.Machine) (*machinev1alpha1.Machine, error) {
+	return service.Get(ctx, machine)
+}
+
 // Delete implements unikctl.sh/api/machine/v1alpha1.MachineService.Delete
 func (service *machineV1alpha1Service) Delete(ctx context.Context, machine *machinev1alpha1.Machine) (*machinev1alpha1.Machine, error) {
 	fccfg, err := getFirecrackerConfigFromPlatformConfig(machine.Status.PlatformConfig)
@@ -612,4 +734,33 @@ func (service *machineV1alpha1Service) Delete(ctx context.Context, machine *mach
 	errs = append(errs, os.RemoveAll(machine.Status.StateDir))
 
 	return nil, errs.Err()
+}
+
+func writeSnapshotMetadata(path string, metadata snapshotMetadata) error {
+	raw, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0o644)
+}
+
+func updateSnapshotResumeLatency(config *FirecrackerConfig) error {
+	if config == nil || strings.TrimSpace(config.SnapshotMeta) == "" {
+		return nil
+	}
+
+	raw, err := os.ReadFile(config.SnapshotMeta)
+	if err != nil {
+		return err
+	}
+
+	var metadata snapshotMetadata
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		return err
+	}
+
+	metadata.ResumeNanos = time.Since(metadata.CreatedAt).Nanoseconds()
+	metadata.LastUsedAt = time.Now().UTC()
+	metadata.ReferenceCount++
+	return writeSnapshotMetadata(config.SnapshotMeta, metadata)
 }

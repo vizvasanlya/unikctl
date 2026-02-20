@@ -31,10 +31,12 @@ type Client struct {
 	baseURL    string
 	httpClient *http.Client
 	authToken  string
+	tenantID   string
 }
 
 type ClientOptions struct {
 	AuthToken   string
+	TenantID    string
 	TLSCAFile   string
 	TLSInsecure bool
 	Timeout     time.Duration
@@ -60,9 +62,11 @@ func NewClientFromContext(ctx context.Context) (*Client, error) {
 	if authToken == "" {
 		authToken = strings.TrimSpace(controlPlaneCfg.Token)
 	}
+	tenantID := strings.TrimSpace(os.Getenv("UNIKCTL_TENANT"))
 
 	return NewClient(baseURL, ClientOptions{
 		AuthToken:   authToken,
+		TenantID:    tenantID,
 		TLSCAFile:   controlPlaneCfg.TLSCAFile,
 		TLSInsecure: controlPlaneCfg.TLSInsecure || parseBoolEnv("UNIKCTL_CONTROL_PLANE_TLS_INSECURE_SKIP_VERIFY"),
 		Timeout:     30 * time.Second,
@@ -121,6 +125,7 @@ func NewClient(baseURL string, opts ClientOptions) (*Client, error) {
 			Transport: transport,
 		},
 		authToken: strings.TrimSpace(opts.AuthToken),
+		tenantID:  strings.TrimSpace(opts.TenantID),
 	}, nil
 }
 
@@ -165,6 +170,27 @@ func (client *Client) Destroy(ctx context.Context, req DestroyRequest) (*Destroy
 func (client *Client) Status(ctx context.Context) (*StatusResponse, error) {
 	var res StatusResponse
 	if err := client.doJSON(ctx, http.MethodGet, "/v1/status", nil, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+func (client *Client) Inspect(ctx context.Context, name string) (*InspectResponse, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("inspect target is required")
+	}
+
+	var res InspectResponse
+	if err := client.doJSON(ctx, http.MethodGet, "/v1/inspect/"+url.PathEscape(name), nil, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+func (client *Client) SubstrateStatus(ctx context.Context) (*SubstrateStatusResponse, error) {
+	var res SubstrateStatusResponse
+	if err := client.doJSON(ctx, http.MethodGet, "/v1/substrate/status", nil, &res); err != nil {
 		return nil, err
 	}
 	return &res, nil
@@ -454,6 +480,9 @@ func (client *Client) attachCommonHeaders(req *http.Request, traceID string) {
 
 	if strings.TrimSpace(client.authToken) != "" {
 		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(client.authToken))
+	}
+	if strings.TrimSpace(client.tenantID) != "" {
+		req.Header.Set("X-Tenant-ID", strings.TrimSpace(client.tenantID))
 	}
 }
 

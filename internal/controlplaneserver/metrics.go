@@ -24,6 +24,15 @@ type metricsCollector struct {
 	deployLatencyCount  uint64
 	destroyLatencyNanos uint64
 	destroyLatencyCount uint64
+
+	warmResumeLatencyNanos uint64
+	warmResumeLatencyCount uint64
+	warmPauseLatencyNanos  uint64
+	warmPauseLatencyCount  uint64
+	snapshotLatencyNanos   uint64
+	snapshotLatencyCount   uint64
+	warmGCTotal            uint64
+	resumeSLOViolation     uint64
 }
 
 func newMetricsCollector() *metricsCollector {
@@ -55,6 +64,44 @@ func (metrics *metricsCollector) Record(kind operations.Kind, success bool, late
 	}
 }
 
+func (metrics *metricsCollector) RecordWarmResumeLatency(latency time.Duration) {
+	if metrics == nil {
+		return
+	}
+	atomic.AddUint64(&metrics.warmResumeLatencyNanos, uint64(latency.Nanoseconds()))
+	atomic.AddUint64(&metrics.warmResumeLatencyCount, 1)
+}
+
+func (metrics *metricsCollector) RecordWarmPauseLatency(latency time.Duration) {
+	if metrics == nil {
+		return
+	}
+	atomic.AddUint64(&metrics.warmPauseLatencyNanos, uint64(latency.Nanoseconds()))
+	atomic.AddUint64(&metrics.warmPauseLatencyCount, 1)
+}
+
+func (metrics *metricsCollector) RecordSnapshotLatency(latency time.Duration) {
+	if metrics == nil {
+		return
+	}
+	atomic.AddUint64(&metrics.snapshotLatencyNanos, uint64(latency.Nanoseconds()))
+	atomic.AddUint64(&metrics.snapshotLatencyCount, 1)
+}
+
+func (metrics *metricsCollector) IncrementWarmGC(removed int) {
+	if metrics == nil || removed <= 0 {
+		return
+	}
+	atomic.AddUint64(&metrics.warmGCTotal, uint64(removed))
+}
+
+func (metrics *metricsCollector) IncrementResumeSLOViolation() {
+	if metrics == nil {
+		return
+	}
+	atomic.AddUint64(&metrics.resumeSLOViolation, 1)
+}
+
 func (metrics *metricsCollector) Render() string {
 	startedAt := time.Unix(0, int64(atomic.LoadUint64(&metrics.startedAtNanos))).UTC()
 	deployTotal := atomic.LoadUint64(&metrics.deployTotal)
@@ -74,6 +121,21 @@ func (metrics *metricsCollector) Render() string {
 
 	deployFailureRate := ratio(deployFailed, deployTotal)
 	destroyFailureRate := ratio(destroyFailed, destroyTotal)
+
+	warmResumeAvgMs := averageMillis(
+		atomic.LoadUint64(&metrics.warmResumeLatencyNanos),
+		atomic.LoadUint64(&metrics.warmResumeLatencyCount),
+	)
+	warmPauseAvgMs := averageMillis(
+		atomic.LoadUint64(&metrics.warmPauseLatencyNanos),
+		atomic.LoadUint64(&metrics.warmPauseLatencyCount),
+	)
+	snapshotAvgMs := averageMillis(
+		atomic.LoadUint64(&metrics.snapshotLatencyNanos),
+		atomic.LoadUint64(&metrics.snapshotLatencyCount),
+	)
+	warmGCTotal := atomic.LoadUint64(&metrics.warmGCTotal)
+	resumeSLOViolation := atomic.LoadUint64(&metrics.resumeSLOViolation)
 
 	return fmt.Sprintf(
 		"# HELP unikctl_control_plane_uptime_seconds Control-plane uptime in seconds.\n"+
@@ -105,7 +167,22 @@ func (metrics *metricsCollector) Render() string {
 			"unikctl_control_plane_destroy_latency_ms_avg %.3f\n"+
 			"# HELP unikctl_control_plane_retry_total Total retry attempts.\n"+
 			"# TYPE unikctl_control_plane_retry_total counter\n"+
-			"unikctl_control_plane_retry_total %d\n",
+			"unikctl_control_plane_retry_total %d\n"+
+			"# HELP unikctl_control_plane_warm_resume_latency_ms_avg Average warm-resume latency in milliseconds.\n"+
+			"# TYPE unikctl_control_plane_warm_resume_latency_ms_avg gauge\n"+
+			"unikctl_control_plane_warm_resume_latency_ms_avg %.3f\n"+
+			"# HELP unikctl_control_plane_warm_pause_latency_ms_avg Average warm-pause latency in milliseconds.\n"+
+			"# TYPE unikctl_control_plane_warm_pause_latency_ms_avg gauge\n"+
+			"unikctl_control_plane_warm_pause_latency_ms_avg %.3f\n"+
+			"# HELP unikctl_control_plane_snapshot_latency_ms_avg Average snapshot creation latency in milliseconds.\n"+
+			"# TYPE unikctl_control_plane_snapshot_latency_ms_avg gauge\n"+
+			"unikctl_control_plane_snapshot_latency_ms_avg %.3f\n"+
+			"# HELP unikctl_control_plane_warm_gc_total Total number of warm-pool entries removed by garbage collection.\n"+
+			"# TYPE unikctl_control_plane_warm_gc_total counter\n"+
+			"unikctl_control_plane_warm_gc_total %d\n"+
+			"# HELP unikctl_control_plane_resume_slo_violation_total Number of warm starts exceeding configured resume threshold.\n"+
+			"# TYPE unikctl_control_plane_resume_slo_violation_total counter\n"+
+			"unikctl_control_plane_resume_slo_violation_total %d\n",
 		time.Since(startedAt).Seconds(),
 		deployTotal,
 		deployFailed,
@@ -116,6 +193,11 @@ func (metrics *metricsCollector) Render() string {
 		destroyFailureRate,
 		destroyLatencyAvgMs,
 		retryTotal,
+		warmResumeAvgMs,
+		warmPauseAvgMs,
+		snapshotAvgMs,
+		warmGCTotal,
+		resumeSLOViolation,
 	)
 }
 
@@ -131,4 +213,31 @@ func ratio(numerator, denominator uint64) float64 {
 		return 0
 	}
 	return float64(numerator) / float64(denominator)
+}
+
+func (metrics *metricsCollector) AverageDeployLatencyMillis() float64 {
+	if metrics == nil {
+		return 0
+	}
+	return averageMillis(
+		atomic.LoadUint64(&metrics.deployLatencyNanos),
+		atomic.LoadUint64(&metrics.deployLatencyCount),
+	)
+}
+
+func (metrics *metricsCollector) AverageWarmResumeLatencyMillis() float64 {
+	if metrics == nil {
+		return 0
+	}
+	return averageMillis(
+		atomic.LoadUint64(&metrics.warmResumeLatencyNanos),
+		atomic.LoadUint64(&metrics.warmResumeLatencyCount),
+	)
+}
+
+func (metrics *metricsCollector) WarmResumeSamples() uint64 {
+	if metrics == nil {
+		return 0
+	}
+	return atomic.LoadUint64(&metrics.warmResumeLatencyCount)
 }

@@ -13,9 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dgraph-io/badger/v3"
+
 	"unikctl.sh/config"
 	"unikctl.sh/internal/controlplaneapi"
-	"unikctl.sh/internal/lockedfile"
+	"unikctl.sh/internal/walstore"
 )
 
 type nodeState string
@@ -27,7 +29,7 @@ const (
 	nodeStateOffline  nodeState = "offline"
 
 	nodeHeartbeatStaleAfter = 30 * time.Second
-	nodeStoreFileName       = "nodes.json"
+	nodeStoreDirName        = "nodes.db"
 )
 
 type nodeRecord struct {
@@ -50,7 +52,7 @@ type nodeRecord struct {
 }
 
 type nodeStore struct {
-	path string
+	backend *walstore.Store
 }
 
 func newNodeStore(ctx context.Context) (*nodeStore, error) {
@@ -63,42 +65,46 @@ func newNodeStore(ctx context.Context) (*nodeStore, error) {
 		return nil, fmt.Errorf("creating runtime directory: %w", err)
 	}
 
-	return &nodeStore{
-		path: filepath.Join(runtimeDir, nodeStoreFileName),
-	}, nil
+	backend, err := walstore.Open(filepath.Join(runtimeDir, nodeStoreDirName))
+	if err != nil {
+		return nil, err
+	}
+
+	return &nodeStore{backend: backend}, nil
 }
 
 func (store *nodeStore) Register(request controlplaneapi.NodeRegisterRequest) (nodeRecord, error) {
 	now := time.Now().UTC()
 	record := nodeRecord{}
 
-	err := store.transform(func(records []nodeRecord) ([]nodeRecord, error) {
+	err := store.backend.Update(func(txn *badger.Txn) error {
 		normalizedName := strings.TrimSpace(request.Name)
 		if normalizedName == "" {
-			return nil, fmt.Errorf("node name is required")
+			return fmt.Errorf("node name is required")
 		}
 
-		for i := range records {
-			if records[i].Name != normalizedName {
-				continue
-			}
+		existing, found, err := store.getTxn(txn, normalizedName)
+		if err != nil {
+			return err
+		}
 
-			records[i].Address = strings.TrimSpace(request.Address)
-			records[i].AgentURL = strings.TrimSpace(request.AgentURL)
-			records[i].AgentToken = strings.TrimSpace(request.AgentToken)
-			records[i].Labels = cloneLabels(request.Labels)
-			records[i].CapacityCPUMilli = request.CapacityCPUMilli
-			records[i].CapacityMemBytes = request.CapacityMemBytes
-			records[i].UsedCPUMilli = request.UsedCPUMilli
-			records[i].UsedMemBytes = request.UsedMemBytes
-			records[i].Machines = request.Machines
-			records[i].HeartbeatAt = now
-			records[i].UpdatedAt = now
-			if !records[i].Cordoned && !records[i].Draining {
-				records[i].State = nodeStateReady
+		if found {
+			existing.Address = strings.TrimSpace(request.Address)
+			existing.AgentURL = strings.TrimSpace(request.AgentURL)
+			existing.AgentToken = strings.TrimSpace(request.AgentToken)
+			existing.Labels = cloneLabels(request.Labels)
+			existing.CapacityCPUMilli = request.CapacityCPUMilli
+			existing.CapacityMemBytes = request.CapacityMemBytes
+			existing.UsedCPUMilli = request.UsedCPUMilli
+			existing.UsedMemBytes = request.UsedMemBytes
+			existing.Machines = request.Machines
+			existing.HeartbeatAt = now
+			existing.UpdatedAt = now
+			if !existing.Cordoned && !existing.Draining {
+				existing.State = nodeStateReady
 			}
-			record = records[i]
-			return records, nil
+			record = existing
+			return store.setTxn(txn, existing)
 		}
 
 		record = nodeRecord{
@@ -119,8 +125,7 @@ func (store *nodeStore) Register(request controlplaneapi.NodeRegisterRequest) (n
 			UpdatedAt:        now,
 			HeartbeatAt:      now,
 		}
-		records = append(records, record)
-		return records, nil
+		return store.setTxn(txn, record)
 	})
 	if err != nil {
 		return nodeRecord{}, err
@@ -133,50 +138,50 @@ func (store *nodeStore) Heartbeat(request controlplaneapi.NodeHeartbeatRequest) 
 	now := time.Now().UTC()
 	record := nodeRecord{}
 
-	err := store.transform(func(records []nodeRecord) ([]nodeRecord, error) {
+	err := store.backend.Update(func(txn *badger.Txn) error {
 		name := strings.TrimSpace(request.Name)
 		if name == "" {
-			return nil, fmt.Errorf("node name is required")
+			return fmt.Errorf("node name is required")
 		}
 
-		for i := range records {
-			if records[i].Name != name {
-				continue
-			}
-
-			if strings.TrimSpace(request.Address) != "" {
-				records[i].Address = strings.TrimSpace(request.Address)
-			}
-			if strings.TrimSpace(request.AgentURL) != "" {
-				records[i].AgentURL = strings.TrimSpace(request.AgentURL)
-			}
-			if len(request.Labels) > 0 {
-				records[i].Labels = cloneLabels(request.Labels)
-			}
-			if request.CapacityCPUMilli > 0 {
-				records[i].CapacityCPUMilli = request.CapacityCPUMilli
-			}
-			if request.CapacityMemBytes > 0 {
-				records[i].CapacityMemBytes = request.CapacityMemBytes
-			}
-			records[i].UsedCPUMilli = request.UsedCPUMilli
-			records[i].UsedMemBytes = request.UsedMemBytes
-			records[i].Machines = request.Machines
-			records[i].HeartbeatAt = now
-			records[i].UpdatedAt = now
-			if records[i].Draining {
-				records[i].State = nodeStateDraining
-			} else if records[i].Cordoned {
-				records[i].State = nodeStateCordoned
-			} else {
-				records[i].State = nodeStateReady
-			}
-
-			record = records[i]
-			return records, nil
+		existing, found, err := store.getTxn(txn, name)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("node not registered: %s", name)
 		}
 
-		return nil, fmt.Errorf("node not registered: %s", name)
+		if strings.TrimSpace(request.Address) != "" {
+			existing.Address = strings.TrimSpace(request.Address)
+		}
+		if strings.TrimSpace(request.AgentURL) != "" {
+			existing.AgentURL = strings.TrimSpace(request.AgentURL)
+		}
+		if len(request.Labels) > 0 {
+			existing.Labels = cloneLabels(request.Labels)
+		}
+		if request.CapacityCPUMilli > 0 {
+			existing.CapacityCPUMilli = request.CapacityCPUMilli
+		}
+		if request.CapacityMemBytes > 0 {
+			existing.CapacityMemBytes = request.CapacityMemBytes
+		}
+		existing.UsedCPUMilli = request.UsedCPUMilli
+		existing.UsedMemBytes = request.UsedMemBytes
+		existing.Machines = request.Machines
+		existing.HeartbeatAt = now
+		existing.UpdatedAt = now
+		if existing.Draining {
+			existing.State = nodeStateDraining
+		} else if existing.Cordoned {
+			existing.State = nodeStateCordoned
+		} else {
+			existing.State = nodeStateReady
+		}
+
+		record = existing
+		return store.setTxn(txn, existing)
 	})
 	if err != nil {
 		return nodeRecord{}, err
@@ -186,43 +191,76 @@ func (store *nodeStore) Heartbeat(request controlplaneapi.NodeHeartbeatRequest) 
 }
 
 func (store *nodeStore) Get(name string) (nodeRecord, bool, error) {
-	records, err := store.List()
+	record := nodeRecord{}
+	found := false
+	err := store.backend.View(func(txn *badger.Txn) error {
+		var getErr error
+		record, found, getErr = store.getTxn(txn, strings.TrimSpace(name))
+		return getErr
+	})
 	if err != nil {
 		return nodeRecord{}, false, err
 	}
 
-	for _, record := range records {
-		if record.Name == strings.TrimSpace(name) {
-			return record, true, nil
-		}
-	}
-
-	return nodeRecord{}, false, nil
+	return record, found, nil
 }
 
 func (store *nodeStore) List() ([]nodeRecord, error) {
-	raw, err := lockedfile.Read(store.path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []nodeRecord{}, nil
+	records := []nodeRecord{}
+	err := store.backend.View(func(txn *badger.Txn) error {
+		iterator := txn.NewIterator(badger.IteratorOptions{
+			PrefetchValues: true,
+			PrefetchSize:   20,
+		})
+		defer iterator.Close()
+
+		prefix := []byte("node/")
+		for iterator.Seek(prefix); iterator.ValidForPrefix(prefix); iterator.Next() {
+			item := iterator.Item()
+			raw, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+
+			record := nodeRecord{}
+			if err := json.Unmarshal(raw, &record); err != nil {
+				return err
+			}
+			records = append(records, record)
 		}
+
+		return nil
+	})
+	if err != nil {
 		return nil, fmt.Errorf("reading node store: %w", err)
 	}
 
-	return decodeNodeRecords(raw)
+	sort.SliceStable(records, func(i, j int) bool {
+		return records[i].Name < records[j].Name
+	})
+
+	return records, nil
 }
 
 func (store *nodeStore) MarkOfflineStale(maxAge time.Duration) error {
 	now := time.Now().UTC()
-	return store.transform(func(records []nodeRecord) ([]nodeRecord, error) {
-		for i := range records {
-			if records[i].HeartbeatAt.IsZero() || now.Sub(records[i].HeartbeatAt) > maxAge {
-				records[i].State = nodeStateOffline
-				records[i].UpdatedAt = now
+	return store.backend.Update(func(txn *badger.Txn) error {
+		records, err := store.listTxn(txn)
+		if err != nil {
+			return err
+		}
+
+		for _, record := range records {
+			if record.HeartbeatAt.IsZero() || now.Sub(record.HeartbeatAt) > maxAge {
+				record.State = nodeStateOffline
+				record.UpdatedAt = now
+				if err := store.setTxn(txn, record); err != nil {
+					return err
+				}
 			}
 		}
 
-		return records, nil
+		return nil
 	})
 }
 
@@ -230,27 +268,28 @@ func (store *nodeStore) SetCordon(name string, cordoned bool) (nodeRecord, error
 	now := time.Now().UTC()
 	record := nodeRecord{}
 
-	err := store.transform(func(records []nodeRecord) ([]nodeRecord, error) {
-		for i := range records {
-			if records[i].Name != strings.TrimSpace(name) {
-				continue
-			}
-
-			records[i].Cordoned = cordoned
-			if !cordoned {
-				records[i].Draining = false
-				records[i].State = nodeStateReady
-			} else if records[i].Draining {
-				records[i].State = nodeStateDraining
-			} else {
-				records[i].State = nodeStateCordoned
-			}
-			records[i].UpdatedAt = now
-			record = records[i]
-			return records, nil
+	err := store.backend.Update(func(txn *badger.Txn) error {
+		var found bool
+		var err error
+		record, found, err = store.getTxn(txn, strings.TrimSpace(name))
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("node not found: %s", name)
 		}
 
-		return nil, fmt.Errorf("node not found: %s", name)
+		record.Cordoned = cordoned
+		if !cordoned {
+			record.Draining = false
+			record.State = nodeStateReady
+		} else if record.Draining {
+			record.State = nodeStateDraining
+		} else {
+			record.State = nodeStateCordoned
+		}
+		record.UpdatedAt = now
+		return store.setTxn(txn, record)
 	})
 	if err != nil {
 		return nodeRecord{}, err
@@ -263,27 +302,28 @@ func (store *nodeStore) SetDraining(name string, draining bool) (nodeRecord, err
 	now := time.Now().UTC()
 	record := nodeRecord{}
 
-	err := store.transform(func(records []nodeRecord) ([]nodeRecord, error) {
-		for i := range records {
-			if records[i].Name != strings.TrimSpace(name) {
-				continue
-			}
-
-			records[i].Draining = draining
-			if draining {
-				records[i].Cordoned = true
-				records[i].State = nodeStateDraining
-			} else if records[i].Cordoned {
-				records[i].State = nodeStateCordoned
-			} else {
-				records[i].State = nodeStateReady
-			}
-			records[i].UpdatedAt = now
-			record = records[i]
-			return records, nil
+	err := store.backend.Update(func(txn *badger.Txn) error {
+		var found bool
+		var err error
+		record, found, err = store.getTxn(txn, strings.TrimSpace(name))
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("node not found: %s", name)
 		}
 
-		return nil, fmt.Errorf("node not found: %s", name)
+		record.Draining = draining
+		if draining {
+			record.Cordoned = true
+			record.State = nodeStateDraining
+		} else if record.Cordoned {
+			record.State = nodeStateCordoned
+		} else {
+			record.State = nodeStateReady
+		}
+		record.UpdatedAt = now
+		return store.setTxn(txn, record)
 	})
 	if err != nil {
 		return nodeRecord{}, err
@@ -292,49 +332,44 @@ func (store *nodeStore) SetDraining(name string, draining bool) (nodeRecord, err
 	return record, nil
 }
 
-func decodeNodeRecords(raw []byte) ([]nodeRecord, error) {
-	if len(strings.TrimSpace(string(raw))) == 0 {
-		return []nodeRecord{}, nil
-	}
+func (store *nodeStore) getTxn(txn *badger.Txn, name string) (nodeRecord, bool, error) {
+	record := nodeRecord{}
+	found, err := walstore.GetJSON(txn, nodeKey(name), &record)
+	return record, found, err
+}
 
+func (store *nodeStore) listTxn(txn *badger.Txn) ([]nodeRecord, error) {
 	records := []nodeRecord{}
-	if err := json.Unmarshal(raw, &records); err != nil {
-		return nil, fmt.Errorf("parsing node store: %w", err)
-	}
-
-	sort.SliceStable(records, func(i, j int) bool {
-		return records[i].Name < records[j].Name
+	iterator := txn.NewIterator(badger.IteratorOptions{
+		PrefetchValues: true,
+		PrefetchSize:   20,
 	})
+	defer iterator.Close()
+
+	prefix := []byte("node/")
+	for iterator.Seek(prefix); iterator.ValidForPrefix(prefix); iterator.Next() {
+		item := iterator.Item()
+		raw, err := item.ValueCopy(nil)
+		if err != nil {
+			return nil, err
+		}
+
+		record := nodeRecord{}
+		if err := json.Unmarshal(raw, &record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
 
 	return records, nil
 }
 
-func encodeNodeRecords(records []nodeRecord) ([]byte, error) {
-	raw, err := json.MarshalIndent(records, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("serializing node store: %w", err)
-	}
-	return raw, nil
+func (store *nodeStore) setTxn(txn *badger.Txn, record nodeRecord) error {
+	return walstore.SetJSON(txn, nodeKey(record.Name), record)
 }
 
-func (store *nodeStore) transform(fn func([]nodeRecord) ([]nodeRecord, error)) error {
-	if err := os.MkdirAll(filepath.Dir(store.path), 0o755); err != nil {
-		return fmt.Errorf("creating node store directory: %w", err)
-	}
-
-	return lockedfile.Transform(store.path, func(raw []byte) ([]byte, error) {
-		records, err := decodeNodeRecords(raw)
-		if err != nil {
-			return nil, err
-		}
-
-		updated, err := fn(records)
-		if err != nil {
-			return nil, err
-		}
-
-		return encodeNodeRecords(updated)
-	})
+func nodeKey(name string) string {
+	return "node/" + strings.TrimSpace(name)
 }
 
 func cloneLabels(source map[string]string) map[string]string {

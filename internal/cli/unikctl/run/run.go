@@ -43,6 +43,7 @@ import (
 
 type RunOptions struct {
 	Architecture   string        `long:"arch" short:"m" usage:"Set the architecture"`
+	CPU            string        `long:"cpu" usage:"Assign CPUs to the unikernel (e.g. 1, 2500m)" default:"1"`
 	Detach         bool          `long:"detach" short:"d" usage:"Run unikernel in background"`
 	DisableAccel   bool          `long:"disable-acceleration" short:"W" usage:"Disable acceleration of CPU (usually enables TCG)"`
 	Env            []string      `long:"env" short:"e" usage:"Set environment variables, int the format key[=value]" split:"false"`
@@ -277,6 +278,17 @@ func (opts *RunOptions) Pre(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	if strings.TrimSpace(opts.CPU) != "" {
+		qty, err := resource.ParseQuantity(strings.TrimSpace(opts.CPU))
+		if err != nil {
+			return fmt.Errorf("could not parse CPU quantity: %w", err)
+		}
+
+		if qty.MilliValue() <= 0 {
+			return fmt.Errorf("cpu must be greater than zero")
+		}
+	}
+
 	return nil
 }
 
@@ -309,6 +321,17 @@ func (opts *RunOptions) detectAndSetHostPlatform(ctx context.Context) error {
 			return fmt.Errorf("unknown platform driver '%s', however your system supports '%s'", opts.Platform, opts.hostPlatform.String())
 		}
 	}
+
+	if opts.platform == mplatform.PlatformQEMU {
+		firecrackerAvailable := opts.hostPlatform == mplatform.PlatformFirecracker
+		if !firecrackerAvailable {
+			_, firecrackerAvailable = mplatform.Strategies()[mplatform.PlatformFirecracker]
+		}
+		if firecrackerAvailable {
+			log.G(ctx).Warn("host supports firecracker but qemu was selected; qemu should only be used as explicit fallback")
+		}
+	}
+
 	if opts.hostPlatform != mplatform.PlatformUnknown && opts.hostPlatform.String() == opts.Platform && opts.hostMode == mplatform.SystemGuest && !opts.DisableAccel {
 		log.G(ctx).Warn("using hardware emulation")
 		opts.DisableAccel = true
@@ -504,6 +527,15 @@ func (opts *RunOptions) Run(ctx context.Context, args []string) (retErr error) {
 		machine.Spec.Resources.Requests[corev1.ResourceMemory] = quantity
 	}
 
+	if strings.TrimSpace(opts.CPU) != "" {
+		quantity, err := resource.ParseQuantity(strings.TrimSpace(opts.CPU))
+		if err != nil {
+			return err
+		}
+
+		machine.Spec.Resources.Requests[corev1.ResourceCPU] = quantity
+	}
+
 	if err := opts.parseNetworks(ctx, machine); err != nil {
 		return err
 	}
@@ -680,6 +712,7 @@ func (opts *RunOptions) remoteDeploy(ctx context.Context, args []string) error {
 	response, err := client.Deploy(ctx, controlplaneapi.DeployRequest{
 		Args:               deployArgs,
 		Debug:              opts.Debug || opts.WithKernelDbg,
+		CPU:                strings.TrimSpace(opts.CPU),
 		Memory:             opts.Memory,
 		Name:               opts.Name,
 		Rootfs:             opts.Rootfs,
@@ -697,6 +730,7 @@ func (opts *RunOptions) remoteDeploy(ctx context.Context, args []string) error {
 		MaxUnavailable:     projectDeploy.Deploy.MaxUnavailable,
 		MaxSurge:           projectDeploy.Deploy.MaxSurge,
 		CanaryPercent:      projectDeploy.Deploy.CanaryPercent,
+		Tenant:             strings.TrimSpace(os.Getenv("UNIKCTL_TENANT")),
 		HealthCheck: struct {
 			Path            string `json:"path,omitempty"`
 			Port            int    `json:"port,omitempty"`
@@ -809,7 +843,9 @@ func deployIdempotencyKey(opts *RunOptions, args []string, projectDeploy deployP
 		strings.TrimSpace(opts.Target),
 		strings.TrimSpace(opts.Platform),
 		strings.TrimSpace(opts.Architecture),
+		strings.TrimSpace(opts.CPU),
 		strings.TrimSpace(opts.Memory),
+		strings.TrimSpace(os.Getenv("UNIKCTL_TENANT")),
 		fmt.Sprintf("%t", opts.Debug || opts.WithKernelDbg),
 		strings.TrimSpace(projectDeploy.Deploy.ServiceName),
 		fmt.Sprintf("%d", projectDeploy.Deploy.Replicas),

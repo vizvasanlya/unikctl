@@ -36,28 +36,40 @@ import (
 )
 
 type Server struct {
-	addr         string
-	ctx          context.Context
-	ops          *operations.Store
-	nodes        *nodeStore
-	workloads    *workloadStore
-	services     *serviceStore
-	artifactsDir string
-	jobsDir      string
-	httpServer   *http.Server
-	jobs         chan job
-	workers      int
-	maxRetries   int
-	tlsCertFile  string
-	tlsKeyFile   string
-	authToken    string
-	tokenScopes  map[string]map[string]struct{}
-	jwtSecret    string
-	metrics      *metricsCollector
-	wg           sync.WaitGroup
-	shutdownOnce sync.Once
-	recoverMu    sync.Mutex
-	recoverAt    map[string]time.Time
+	addr                 string
+	ctx                  context.Context
+	ops                  *operations.Store
+	nodes                *nodeStore
+	workloads            *workloadStore
+	services             *serviceStore
+	artifactsDir         string
+	queue                *jobQueue
+	httpServer           *http.Server
+	workers              int
+	maxRetries           int
+	tlsCertFile          string
+	tlsKeyFile           string
+	authToken            string
+	tokenScopes          map[string]map[string]struct{}
+	jwtSecret            string
+	jwtIssuer            string
+	jwtAudience          string
+	allowInsecureHTTP    bool
+	allowUnauthenticated bool
+	tenantQuotas         map[string]tenantQuota
+	tenantNodeAffinity   map[string]map[string]string
+	snapshotFastPath     bool
+	warmPool             *warmPoolManager
+	rateLimiter          *requestRateLimiter
+	metrics              *metricsCollector
+	machineServiceFactory func(context.Context) (machineapi.MachineService, error)
+	wg                   sync.WaitGroup
+	shutdownOnce         sync.Once
+	recoverMu            sync.Mutex
+	recoverAt            map[string]time.Time
+	hostStealMu          sync.Mutex
+	hostStealLastMillis  int64
+	hostStealInitialized bool
 }
 
 const (
@@ -118,9 +130,13 @@ func New(ctx context.Context, addr string, workers int) (*Server, error) {
 		return nil, fmt.Errorf("creating artifacts directory: %w", err)
 	}
 
-	jobsDir := filepath.Join(runtimeDir, "control-plane-jobs")
-	if err := os.MkdirAll(jobsDir, 0o755); err != nil {
-		return nil, fmt.Errorf("creating jobs directory: %w", err)
+	queue, err := newJobQueue(runtimeDir)
+	if err != nil {
+		return nil, err
+	}
+	warmPool, err := newWarmPoolManager(runtimeDir)
+	if err != nil {
+		return nil, err
 	}
 
 	controlPlaneCfg := config.G[config.KraftKit](ctx).ControlPlane
@@ -130,24 +146,30 @@ func New(ctx context.Context, addr string, workers int) (*Server, error) {
 	}
 
 	server := &Server{
-		addr:         addr,
-		ctx:          ctx,
-		ops:          ops,
-		nodes:        nodes,
-		workloads:    workloads,
-		services:     services,
-		artifactsDir: artifactsDir,
-		jobsDir:      jobsDir,
-		jobs:         make(chan job, 1024),
-		workers:      workers,
-		maxRetries:   defaultMaxRetries,
-		tlsCertFile:  strings.TrimSpace(controlPlaneCfg.TLSCertFile),
-		tlsKeyFile:   strings.TrimSpace(controlPlaneCfg.TLSKeyFile),
-		authToken:    strings.TrimSpace(controlPlaneCfg.Token),
-		tokenScopes:  tokenScopes,
-		jwtSecret:    strings.TrimSpace(controlPlaneCfg.JWTSecret),
-		metrics:      newMetricsCollector(),
-		recoverAt:    map[string]time.Time{},
+		addr:                 addr,
+		ctx:                  ctx,
+		ops:                  ops,
+		nodes:                nodes,
+		workloads:            workloads,
+		services:             services,
+		artifactsDir:         artifactsDir,
+		queue:                queue,
+		warmPool:             warmPool,
+		workers:              workers,
+		maxRetries:           defaultMaxRetries,
+		tlsCertFile:          strings.TrimSpace(controlPlaneCfg.TLSCertFile),
+		tlsKeyFile:           strings.TrimSpace(controlPlaneCfg.TLSKeyFile),
+		authToken:            strings.TrimSpace(controlPlaneCfg.Token),
+		tokenScopes:          tokenScopes,
+		jwtSecret:            strings.TrimSpace(controlPlaneCfg.JWTSecret),
+		jwtIssuer:            strings.TrimSpace(controlPlaneCfg.JWTIssuer),
+		jwtAudience:          strings.TrimSpace(controlPlaneCfg.JWTAudience),
+		allowInsecureHTTP:    controlPlaneCfg.AllowInsecure,
+		allowUnauthenticated: controlPlaneCfg.AllowUnauth,
+		metrics:              newMetricsCollector(),
+		machineServiceFactory: mplatform.NewMachineV1alpha1ServiceIterator,
+		snapshotFastPath:     true,
+		recoverAt:            map[string]time.Time{},
 	}
 
 	if envMaxRetries := strings.TrimSpace(os.Getenv("UNIKCTL_CONTROL_PLANE_MAX_RETRIES")); envMaxRetries != "" {
@@ -162,6 +184,12 @@ func New(ctx context.Context, addr string, workers int) (*Server, error) {
 	if envJWT := strings.TrimSpace(os.Getenv("UNIKCTL_CONTROL_PLANE_JWT_HS256_SECRET")); envJWT != "" {
 		server.jwtSecret = envJWT
 	}
+	if envJWTIssuer := strings.TrimSpace(os.Getenv("UNIKCTL_CONTROL_PLANE_JWT_ISSUER")); envJWTIssuer != "" {
+		server.jwtIssuer = envJWTIssuer
+	}
+	if envJWTAudience := strings.TrimSpace(os.Getenv("UNIKCTL_CONTROL_PLANE_JWT_AUDIENCE")); envJWTAudience != "" {
+		server.jwtAudience = envJWTAudience
+	}
 	if envPolicy := strings.TrimSpace(os.Getenv("UNIKCTL_CONTROL_PLANE_RBAC_TOKENS")); envPolicy != "" {
 		tokenScopes, err := parseRBACPolicy(envPolicy)
 		if err != nil {
@@ -175,18 +203,42 @@ func New(ctx context.Context, addr string, workers int) (*Server, error) {
 	if envKey := strings.TrimSpace(os.Getenv("UNIKCTL_CONTROL_PLANE_TLS_KEY_FILE")); envKey != "" {
 		server.tlsKeyFile = envKey
 	}
+	if parseBoolEnv("UNIKCTL_CONTROL_PLANE_ALLOW_INSECURE_HTTP") {
+		server.allowInsecureHTTP = true
+	}
+	if parseBoolEnv("UNIKCTL_CONTROL_PLANE_ALLOW_UNAUTHENTICATED") {
+		server.allowUnauthenticated = true
+	}
+	if raw := strings.TrimSpace(strings.ToLower(os.Getenv("UNIKCTL_SNAPSHOT_FAST_PATH"))); raw != "" {
+		server.snapshotFastPath = !(raw == "0" || raw == "false" || raw == "no" || raw == "off")
+	}
+
+	quotaPolicy := strings.TrimSpace(os.Getenv("UNIKCTL_TENANT_QUOTAS"))
+	tenantQuotas, err := parseTenantQuotas(quotaPolicy)
+	if err != nil {
+		return nil, err
+	}
+	server.tenantQuotas = tenantQuotas
+	tenantAffinity, err := parseTenantNodeAffinity(strings.TrimSpace(os.Getenv("UNIKCTL_TENANT_NODE_AFFINITY")))
+	if err != nil {
+		return nil, err
+	}
+	server.tenantNodeAffinity = tenantAffinity
+	server.rateLimiter = newRequestRateLimiterFromEnv()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", server.handleHealth)
-	mux.HandleFunc("/v1/artifacts", server.handleArtifacts)
-	mux.HandleFunc("/v1/deployments", server.handleDeploy)
-	mux.HandleFunc("/v1/destroy", server.handleDestroy)
-	mux.HandleFunc("/v1/status", server.handleStatus)
-	mux.HandleFunc("/v1/logs/", server.handleLogs)
-	mux.HandleFunc("/v1/metrics", server.handleMetrics)
-	mux.HandleFunc("/v1/nodes/register", server.handleNodeRegister)
-	mux.HandleFunc("/v1/nodes/heartbeat", server.handleNodeHeartbeat)
-	mux.HandleFunc("/v1/nodes/", server.handleNodeAction)
+	mux.HandleFunc("/v1/artifacts", server.withRateLimit(server.handleArtifacts))
+	mux.HandleFunc("/v1/deployments", server.withRateLimit(server.handleDeploy))
+	mux.HandleFunc("/v1/destroy", server.withRateLimit(server.handleDestroy))
+	mux.HandleFunc("/v1/status", server.withRateLimit(server.handleStatus))
+	mux.HandleFunc("/v1/inspect/", server.withRateLimit(server.handleInspect))
+	mux.HandleFunc("/v1/logs/", server.withRateLimit(server.handleLogs))
+	mux.HandleFunc("/v1/metrics", server.withRateLimit(server.handleMetrics))
+	mux.HandleFunc("/v1/substrate/status", server.withRateLimit(server.handleSubstrateStatus))
+	mux.HandleFunc("/v1/nodes/register", server.withRateLimit(server.handleNodeRegister))
+	mux.HandleFunc("/v1/nodes/heartbeat", server.withRateLimit(server.handleNodeHeartbeat))
+	mux.HandleFunc("/v1/nodes/", server.withRateLimit(server.handleNodeAction))
 
 	server.httpServer = &http.Server{Addr: addr, Handler: mux}
 	server.httpServer.TLSConfig = &tls.Config{
@@ -197,17 +249,16 @@ func New(ctx context.Context, addr string, workers int) (*Server, error) {
 }
 
 func (server *Server) Run() error {
-	if err := server.requeuePersistedJobs(); err != nil {
-		log.G(server.ctx).WithError(err).Warn("could not requeue persisted jobs")
-	}
-
 	for i := 0; i < server.workers; i++ {
 		server.wg.Add(1)
-		go server.worker()
+		go server.worker(i)
 	}
 
 	go server.reconcileNodes(server.ctx)
 	go server.reconcileWorkloads(server.ctx)
+	if server.warmPool != nil && server.warmPool.Enabled() {
+		go server.reconcileWarmPool(server.ctx)
+	}
 
 	go func() {
 		<-server.ctx.Done()
@@ -229,6 +280,9 @@ func (server *Server) listenAndServe() error {
 	cert := strings.TrimSpace(server.tlsCertFile)
 	key := strings.TrimSpace(server.tlsKeyFile)
 	if cert == "" && key == "" {
+		if !server.allowInsecureHTTP {
+			return fmt.Errorf("TLS is required by default: configure control-plane tls_cert_file/tls_key_file or explicitly enable allow_insecure_http")
+		}
 		return server.httpServer.ListenAndServe()
 	}
 
@@ -241,19 +295,35 @@ func (server *Server) listenAndServe() error {
 
 func (server *Server) shutdown() {
 	server.shutdownOnce.Do(func() {
-		close(server.jobs)
-
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = server.httpServer.Shutdown(ctx)
 	})
 }
 
-func (server *Server) worker() {
+func (server *Server) worker(index int) {
 	defer server.wg.Done()
 
-	for queued := range server.jobs {
-		server.processJob(queued)
+	owner := fmt.Sprintf("worker-%d", index)
+	for {
+		select {
+		case <-server.ctx.Done():
+			return
+		default:
+		}
+
+		queued, claimed, err := server.queue.Claim(owner, 20*time.Second)
+		if err != nil {
+			log.G(server.ctx).WithError(err).Warn("could not claim control-plane job lease")
+			time.Sleep(250 * time.Millisecond)
+			continue
+		}
+		if !claimed || queued == nil {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+
+		server.processJob(*queued)
 	}
 }
 
@@ -285,7 +355,7 @@ func (server *Server) processJob(queued job) {
 			"kind":      kind,
 		}).Info("operation completed")
 		server.metrics.Record(kind, true, time.Since(createdAt), 0)
-		_ = server.deleteJob(queued.operationID)
+		_ = server.queue.Ack(queued.operationID)
 		return
 	}
 
@@ -293,7 +363,7 @@ func (server *Server) processJob(queued job) {
 		queued.attempt++
 		backoff := retryBackoff(queued.attempt)
 		server.metrics.Record(kind, false, time.Since(createdAt), 1)
-		_ = server.persistJob(queued)
+		_ = server.queue.Retry(queued, backoff, err)
 		_ = server.ops.SetState(
 			queued.operationID,
 			operations.StateRunning,
@@ -306,20 +376,12 @@ func (server *Server) processJob(queued job) {
 			"attempt":   queued.attempt,
 		}).WithError(err).Warn("operation attempt failed, scheduling retry")
 
-		time.AfterFunc(backoff, func() {
-			select {
-			case server.jobs <- queued:
-			default:
-				_ = server.ops.Fail(queued.operationID, fmt.Errorf("control plane queue is full during retry"))
-				_ = server.deleteJob(queued.operationID)
-			}
-		})
 		return
 	}
 
 	server.metrics.Record(kind, false, time.Since(createdAt), 0)
 	_ = server.ops.Fail(queued.operationID, err)
-	_ = server.deleteJob(queued.operationID)
+	_ = server.queue.Fail(queued.operationID, err)
 	log.G(server.ctx).WithFields(map[string]interface{}{
 		"operation": queued.operationID,
 		"trace_id":  queued.traceID,
@@ -545,6 +607,17 @@ func (server *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	headerTenant := strings.TrimSpace(r.Header.Get("X-Tenant-ID"))
+	if headerTenant != "" {
+		request.Tenant = normalizeTenant(headerTenant)
+	} else {
+		request.Tenant = normalizeTenant(firstNonEmpty(
+			request.Tenant,
+			strings.TrimSpace(os.Getenv("UNIKCTL_TENANT")),
+			"default",
+		))
+	}
+
 	request.TraceID = firstNonEmpty(request.TraceID, traceID)
 	request.IdempotencyKey = firstNonEmpty(request.IdempotencyKey, strings.TrimSpace(r.Header.Get("Idempotency-Key")))
 
@@ -559,6 +632,7 @@ func (server *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		operations.StartOptions{
 			TraceID:        request.TraceID,
 			IdempotencyKey: request.IdempotencyKey,
+			Tenant:         request.Tenant,
 		},
 	)
 	if err != nil {
@@ -584,23 +658,16 @@ func (server *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		traceID:     request.TraceID,
 		deploy:      &request,
 	}
-	if err := server.persistJob(queuedJob); err != nil {
+	if err := server.queue.Enqueue(queuedJob); err != nil {
 		_ = server.ops.Fail(record.ID, err)
 		writeErrorTrace(w, http.StatusInternalServerError, fmt.Sprintf("persisting operation: %v", err), request.TraceID)
 		return
 	}
 
-	select {
-	case server.jobs <- queuedJob:
-		writeJSON(w, http.StatusAccepted, controlplaneapi.DeployResponse{
-			OperationID: record.ID,
-			TraceID:     request.TraceID,
-		})
-	default:
-		_ = server.ops.Fail(record.ID, fmt.Errorf("control plane queue is full"))
-		_ = server.deleteJob(record.ID)
-		writeErrorTrace(w, http.StatusServiceUnavailable, "control plane queue is full", request.TraceID)
-	}
+	writeJSON(w, http.StatusAccepted, controlplaneapi.DeployResponse{
+		OperationID: record.ID,
+		TraceID:     request.TraceID,
+	})
 }
 
 func (server *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
@@ -621,6 +688,41 @@ func (server *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 		writeErrorTrace(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err), traceID)
 		return
 	}
+	tenantScope, scopedTenant := tenantScopeFromRequest(r)
+
+	if scopedTenant {
+		if request.All {
+			records, err := server.workloads.ByTenant(tenantScope)
+			if err != nil {
+				writeErrorTrace(w, http.StatusInternalServerError, fmt.Sprintf("listing tenant workloads: %v", err), traceID)
+				return
+			}
+
+			request.Names = request.Names[:0]
+			for _, record := range records {
+				machine := strings.TrimSpace(record.Machine)
+				if machine == "" {
+					continue
+				}
+				request.Names = append(request.Names, machine)
+			}
+			request.All = false
+		} else {
+			filtered := make([]string, 0, len(request.Names))
+			for _, name := range request.Names {
+				name = strings.TrimSpace(name)
+				if name == "" {
+					continue
+				}
+				if err := server.ensureTenantMachineAccess(name, tenantScope); err != nil {
+					writeErrorTrace(w, http.StatusNotFound, "deployment not found", traceID)
+					return
+				}
+				filtered = append(filtered, name)
+			}
+			request.Names = filtered
+		}
+	}
 
 	if !request.All && len(request.Names) == 0 {
 		writeErrorTrace(w, http.StatusBadRequest, "destroy request requires names or all=true", traceID)
@@ -635,6 +737,11 @@ func (server *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 		targets = []string{"*"}
 	}
 
+	destroyTenant := ""
+	if scopedTenant {
+		destroyTenant = tenantScope
+	}
+
 	record, reused, err := server.ops.StartIdempotent(
 		operations.KindDestroy,
 		targets,
@@ -642,6 +749,7 @@ func (server *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 		operations.StartOptions{
 			TraceID:        request.TraceID,
 			IdempotencyKey: request.IdempotencyKey,
+			Tenant:         destroyTenant,
 		},
 	)
 	if err != nil {
@@ -663,23 +771,16 @@ func (server *Server) handleDestroy(w http.ResponseWriter, r *http.Request) {
 		traceID:     request.TraceID,
 		destroy:     &request,
 	}
-	if err := server.persistJob(queuedJob); err != nil {
+	if err := server.queue.Enqueue(queuedJob); err != nil {
 		_ = server.ops.Fail(record.ID, err)
 		writeErrorTrace(w, http.StatusInternalServerError, fmt.Sprintf("persisting operation: %v", err), request.TraceID)
 		return
 	}
 
-	select {
-	case server.jobs <- queuedJob:
-		writeJSON(w, http.StatusAccepted, controlplaneapi.DestroyResponse{
-			OperationID: record.ID,
-			TraceID:     request.TraceID,
-		})
-	default:
-		_ = server.ops.Fail(record.ID, fmt.Errorf("control plane queue is full"))
-		_ = server.deleteJob(record.ID)
-		writeErrorTrace(w, http.StatusServiceUnavailable, "control plane queue is full", request.TraceID)
-	}
+	writeJSON(w, http.StatusAccepted, controlplaneapi.DestroyResponse{
+		OperationID: record.ID,
+		TraceID:     request.TraceID,
+	})
 }
 
 func (server *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -713,8 +814,31 @@ func (server *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		machineStates[machine.ID] = machine.State
 	}
 
+	tenantScope, scopedTenant := tenantScopeFromRequest(r)
+	tenantMachines := map[string]struct{}{}
+	tenantNodes := map[string]struct{}{}
+	if scopedTenant {
+		machineSet, err := server.tenantMachineSet(tenantScope)
+		if err != nil {
+			writeErrorTrace(w, http.StatusInternalServerError, fmt.Sprintf("listing tenant workloads: %v", err), traceID)
+			return
+		}
+		tenantMachines = machineSet
+
+		nodeSet, err := server.tenantNodeSet(tenantScope)
+		if err != nil {
+			writeErrorTrace(w, http.StatusInternalServerError, fmt.Sprintf("listing tenant nodes: %v", err), traceID)
+			return
+		}
+		tenantNodes = nodeSet
+	}
+
 	operationsOut := make([]controlplaneapi.Operation, 0, len(records))
 	for _, record := range records {
+		if scopedTenant && !operationVisibleToTenant(record, tenantScope, tenantMachines) {
+			continue
+		}
+
 		target := record.Machine
 		if target == "" && len(record.Targets) > 0 {
 			target = strings.Join(record.Targets, ",")
@@ -744,6 +868,12 @@ func (server *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	machinesOut := make([]controlplaneapi.Machine, 0, len(machines))
 	for _, machine := range machines {
+		if scopedTenant {
+			if _, ok := tenantMachines[machine.Name]; !ok {
+				continue
+			}
+		}
+
 		machinesOut = append(machinesOut, controlplaneapi.Machine{
 			ID:        machine.ID,
 			Name:      machine.Name,
@@ -768,6 +898,11 @@ func (server *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	nodesOut := make([]controlplaneapi.Node, 0, len(nodeRecords))
 	for _, node := range nodeRecords {
+		if scopedTenant {
+			if _, ok := tenantNodes[node.Name]; !ok {
+				continue
+			}
+		}
 		nodesOut = append(nodesOut, nodeRecordToAPI(node))
 	}
 	if len(nodesOut) == 0 {
@@ -788,8 +923,22 @@ func (server *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	servicesOut := make([]controlplaneapi.Service, 0, len(serviceRecords))
 	for _, service := range serviceRecords {
+		visibleMachines := append([]string{}, service.Current...)
+		if scopedTenant {
+			filteredMachines := make([]string, 0, len(service.Current))
+			for _, machine := range service.Current {
+				if _, ok := tenantMachines[machine]; ok {
+					filteredMachines = append(filteredMachines, machine)
+				}
+			}
+			if len(filteredMachines) == 0 {
+				continue
+			}
+			visibleMachines = filteredMachines
+		}
+
 		ready := 0
-		for _, machine := range service.Current {
+		for _, machine := range visibleMachines {
 			if serviceMachineReady(machineStates[machine]) {
 				ready++
 			}
@@ -801,9 +950,9 @@ func (server *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			Phase:       service.Phase,
 			Message:     service.Message,
 			LastError:   service.LastError,
-			Desired:     service.Desired,
+			Desired:     maxInt(service.Desired, len(visibleMachines)),
 			Ready:       ready,
-			Machines:    append([]string{}, service.Current...),
+			Machines:    visibleMachines,
 			LastHealthy: service.LastHealthy,
 			UpdatedAt:   service.UpdatedAt,
 		})
@@ -836,6 +985,7 @@ func (server *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		writeErrorTrace(w, http.StatusBadRequest, "machine name is required", traceID)
 		return
 	}
+	tenantScope, scopedTenant := tenantScopeFromRequest(r)
 
 	follow := parseBoolQuery(r.URL.Query().Get("follow"))
 
@@ -848,8 +998,28 @@ func (server *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		writeErrorTrace(w, http.StatusNotFound, fmt.Sprintf("service %s has no machines", service.Name), traceID)
 		return
 	}
+	if serviceFound && scopedTenant {
+		filtered := make([]string, 0, len(service.Current))
+		for _, machine := range service.Current {
+			if err := server.ensureTenantMachineAccess(machine, tenantScope); err == nil {
+				filtered = append(filtered, machine)
+			}
+		}
+		if len(filtered) == 0 {
+			writeErrorTrace(w, http.StatusNotFound, "deployment not found", traceID)
+			return
+		}
+		service.Current = filtered
+	}
 
 	if !serviceFound {
+		if scopedTenant {
+			if err := server.ensureTenantMachineAccess(name, tenantScope); err != nil {
+				writeErrorTrace(w, http.StatusNotFound, "deployment not found", traceID)
+				return
+			}
+		}
+
 		if err := server.validateMachineLogTarget(r.Context(), name); err != nil {
 			if strings.Contains(strings.ToLower(err.Error()), "could not find instance") {
 				writeErrorTrace(w, http.StatusNotFound, err.Error(), traceID)
@@ -1093,6 +1263,7 @@ func (server *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.WriteString(w, server.metrics.Render())
+	_, _ = io.WriteString(w, server.renderResourceMetrics())
 }
 
 type machineStatus struct {
@@ -1198,6 +1369,13 @@ func (server *Server) aggregateMachines(ctx context.Context) ([]machineStatus, e
 	}
 
 	return allMachines, nil
+}
+
+func (server *Server) machineService(ctx context.Context) (machineapi.MachineService, error) {
+	if server != nil && server.machineServiceFactory != nil {
+		return server.machineServiceFactory(ctx)
+	}
+	return mplatform.NewMachineV1alpha1ServiceIterator(ctx)
 }
 
 func findMachine(ctx context.Context, controller machineapi.MachineService, name string) (*machineapi.Machine, error) {
@@ -1507,103 +1685,40 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-type persistedJob struct {
-	OperationID string                          `json:"operation_id"`
-	TraceID     string                          `json:"trace_id,omitempty"`
-	Attempt     int                             `json:"attempt"`
-	Deploy      *controlplaneapi.DeployRequest  `json:"deploy,omitempty"`
-	Destroy     *controlplaneapi.DestroyRequest `json:"destroy,omitempty"`
-}
-
-func (server *Server) persistJob(queued job) error {
-	persisted := persistedJob{
-		OperationID: queued.operationID,
-		TraceID:     queued.traceID,
-		Attempt:     queued.attempt,
-		Deploy:      queued.deploy,
-		Destroy:     queued.destroy,
-	}
-
-	raw, err := json.MarshalIndent(persisted, "", "  ")
-	if err != nil {
-		return fmt.Errorf("serializing job: %w", err)
-	}
-
-	target := filepath.Join(server.jobsDir, queued.operationID+".json")
-	temp := target + ".tmp"
-	if err := os.WriteFile(temp, raw, 0o600); err != nil {
-		return fmt.Errorf("writing job file: %w", err)
-	}
-
-	if err := os.Rename(temp, target); err != nil {
-		_ = os.Remove(temp)
-		return fmt.Errorf("moving job file into place: %w", err)
-	}
-
-	return nil
-}
-
-func (server *Server) deleteJob(operationID string) error {
-	target := filepath.Join(server.jobsDir, operationID+".json")
-	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
-}
-
-func (server *Server) requeuePersistedJobs() error {
-	entries, err := os.ReadDir(server.jobsDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".json") {
-			continue
-		}
-
-		raw, err := os.ReadFile(filepath.Join(server.jobsDir, entry.Name()))
-		if err != nil {
-			continue
-		}
-
-		var persisted persistedJob
-		if err := json.Unmarshal(raw, &persisted); err != nil {
-			continue
-		}
-		if strings.TrimSpace(persisted.OperationID) == "" {
-			continue
-		}
-
-		queued := job{
-			operationID: persisted.OperationID,
-			traceID:     persisted.TraceID,
-			attempt:     persisted.Attempt,
-			deploy:      persisted.Deploy,
-			destroy:     persisted.Destroy,
-		}
-
-		select {
-		case server.jobs <- queued:
-		default:
-			return fmt.Errorf("control plane queue is full while requeueing persisted jobs")
-		}
-	}
-
-	return nil
-}
-
 func retryBackoff(attempt int) time.Duration {
+	base := 1 * time.Second
 	if attempt <= 1 {
-		return 1 * time.Second
+		base = 1 * time.Second
+	} else if attempt == 2 {
+		base = 2 * time.Second
+	} else {
+		base = 4 * time.Second
 	}
-	if attempt == 2 {
-		return 2 * time.Second
+
+	jitterWindow := base / 4
+	if jitterWindow <= 0 {
+		return base
 	}
-	return 4 * time.Second
+
+	jitter, err := randomDuration(jitterWindow)
+	if err != nil {
+		return base
+	}
+	return base + jitter
+}
+
+func randomDuration(max time.Duration) (time.Duration, error) {
+	if max <= 0 {
+		return 0, nil
+	}
+
+	var raw [2]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return 0, err
+	}
+
+	value := int64(raw[0])<<8 | int64(raw[1])
+	return time.Duration((value * int64(max)) / 65535), nil
 }
 
 func requestTraceID(r *http.Request) string {
@@ -1631,10 +1746,14 @@ func newTraceID() string {
 }
 
 func (server *Server) authorize(r *http.Request, scope string) (int, error) {
+	if server.allowUnauthenticated {
+		return 0, nil
+	}
+
 	token := strings.TrimSpace(server.authToken)
 	jwtSecret := strings.TrimSpace(server.jwtSecret)
 	if token == "" && len(server.tokenScopes) == 0 && jwtSecret == "" {
-		return 0, nil
+		return http.StatusUnauthorized, fmt.Errorf("authentication is required: configure token, RBAC tokens, or JWT")
 	}
 
 	candidate := parseBearerToken(r.Header.Get("Authorization"))
@@ -1668,7 +1787,14 @@ func (server *Server) authorize(r *http.Request, scope string) (int, error) {
 	}
 
 	if jwtSecret != "" {
-		if err := validateJWT(candidate, jwtSecret, scope, time.Now().UTC()); err != nil {
+		if err := validateJWT(
+			candidate,
+			jwtSecret,
+			scope,
+			strings.TrimSpace(server.jwtIssuer),
+			strings.TrimSpace(server.jwtAudience),
+			time.Now().UTC(),
+		); err != nil {
 			return http.StatusUnauthorized, err
 		}
 		return 0, nil
@@ -1731,7 +1857,7 @@ func parseBearerToken(value string) string {
 	return ""
 }
 
-func validateJWT(token, secret, scope string, now time.Time) error {
+func validateJWT(token, secret, scope, expectedIssuer, expectedAudience string, now time.Time) error {
 	parts := strings.Split(strings.TrimSpace(token), ".")
 	if len(parts) != 3 {
 		return fmt.Errorf("invalid JWT format")
@@ -1773,15 +1899,33 @@ func validateJWT(token, secret, scope string, now time.Time) error {
 		return fmt.Errorf("invalid JWT claims")
 	}
 
-	if exp, ok := claims["exp"]; ok {
-		if !jwtNumericDateAfter(exp, now) {
-			return fmt.Errorf("JWT token is expired")
-		}
+	exp, ok := claims["exp"]
+	if !ok {
+		return fmt.Errorf("JWT token is missing required exp claim")
+	}
+	if !jwtNumericDateAfter(exp, now) {
+		return fmt.Errorf("JWT token is expired")
 	}
 
 	if nbf, ok := claims["nbf"]; ok {
 		if !jwtNumericDateReached(nbf, now) {
 			return fmt.Errorf("JWT token is not active yet")
+		}
+	}
+
+	if expectedIssuer != "" {
+		issuer, _ := claims["iss"].(string)
+		if strings.TrimSpace(issuer) == "" {
+			return fmt.Errorf("JWT token is missing required iss claim")
+		}
+		if strings.TrimSpace(issuer) != expectedIssuer {
+			return fmt.Errorf("JWT issuer mismatch")
+		}
+	}
+
+	if expectedAudience != "" {
+		if !claimMatchesAudience(claims["aud"], expectedAudience) {
+			return fmt.Errorf("JWT audience mismatch")
 		}
 	}
 
@@ -1851,6 +1995,33 @@ func claimAllowsScope(claim any, required string) bool {
 			s, _ := v.(string)
 			s = strings.TrimSpace(s)
 			if s == required || s == "*" {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func claimMatchesAudience(claim any, expected string) bool {
+	expected = strings.TrimSpace(expected)
+	if expected == "" {
+		return true
+	}
+
+	switch typed := claim.(type) {
+	case string:
+		for _, token := range strings.FieldsFunc(typed, func(r rune) bool {
+			return r == ' ' || r == ','
+		}) {
+			if strings.TrimSpace(token) == expected {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			text, _ := item.(string)
+			if strings.TrimSpace(text) == expected {
 				return true
 			}
 		}

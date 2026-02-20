@@ -13,11 +13,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dgraph-io/badger/v3"
+
 	"unikctl.sh/config"
-	"unikctl.sh/internal/lockedfile"
+	"unikctl.sh/internal/walstore"
 )
 
-const serviceStoreFileName = "services.json"
+const serviceStoreDirName = "services.db"
 
 type serviceRecord struct {
 	Name        string    `json:"name"`
@@ -33,7 +35,7 @@ type serviceRecord struct {
 }
 
 type serviceStore struct {
-	path string
+	backend *walstore.Store
 }
 
 func newServiceStore(ctx context.Context) (*serviceStore, error) {
@@ -46,24 +48,26 @@ func newServiceStore(ctx context.Context) (*serviceStore, error) {
 		return nil, fmt.Errorf("creating runtime directory: %w", err)
 	}
 
-	return &serviceStore{
-		path: filepath.Join(runtimeDir, serviceStoreFileName),
-	}, nil
+	backend, err := walstore.Open(filepath.Join(runtimeDir, serviceStoreDirName))
+	if err != nil {
+		return nil, err
+	}
+
+	return &serviceStore{backend: backend}, nil
 }
 
 func (store *serviceStore) Get(name string) (serviceRecord, bool, error) {
-	records, err := store.List()
+	record := serviceRecord{}
+	found := false
+	err := store.backend.View(func(txn *badger.Txn) error {
+		var getErr error
+		found, getErr = walstore.GetJSON(txn, serviceKey(name), &record)
+		return getErr
+	})
 	if err != nil {
 		return serviceRecord{}, false, err
 	}
-
-	for _, record := range records {
-		if record.Name == strings.TrimSpace(name) {
-			return record, true, nil
-		}
-	}
-
-	return serviceRecord{}, false, nil
+	return record, found, nil
 }
 
 func (store *serviceStore) Upsert(name, strategy string, desired int, current []string, healthy bool) error {
@@ -81,99 +85,73 @@ func (store *serviceStore) UpsertState(name, strategy string, desired int, curre
 		desired = 1
 	}
 
-	return store.transform(func(records []serviceRecord) ([]serviceRecord, error) {
-		for i := range records {
-			if records[i].Name != name {
-				continue
-			}
-
-			records[i].Strategy = strings.TrimSpace(strategy)
-			records[i].Phase = strings.TrimSpace(phase)
-			records[i].Message = strings.TrimSpace(message)
-			records[i].LastError = strings.TrimSpace(lastError)
-			records[i].Desired = desired
-			records[i].Current = normalizeStringSlice(current)
-			records[i].UpdatedAt = now
-			if healthy {
-				records[i].LastHealthy = now
-			}
-			return records, nil
+	return store.backend.Update(func(txn *badger.Txn) error {
+		record := serviceRecord{}
+		found, err := walstore.GetJSON(txn, serviceKey(name), &record)
+		if err != nil {
+			return err
 		}
 
-		record := serviceRecord{
-			Name:      name,
-			Strategy:  strings.TrimSpace(strategy),
-			Phase:     strings.TrimSpace(phase),
-			Message:   strings.TrimSpace(message),
-			LastError: strings.TrimSpace(lastError),
-			Desired:   desired,
-			Current:   normalizeStringSlice(current),
-			CreatedAt: now,
-			UpdatedAt: now,
+		if !found {
+			record = serviceRecord{
+				Name:      name,
+				CreatedAt: now,
+			}
 		}
+
+		record.Strategy = strings.TrimSpace(strategy)
+		record.Phase = strings.TrimSpace(phase)
+		record.Message = strings.TrimSpace(message)
+		record.LastError = strings.TrimSpace(lastError)
+		record.Desired = desired
+		record.Current = normalizeStringSlice(current)
+		record.UpdatedAt = now
 		if healthy {
 			record.LastHealthy = now
 		}
-		records = append(records, record)
-		return records, nil
+
+		return walstore.SetJSON(txn, serviceKey(name), record)
 	})
 }
 
 func (store *serviceStore) List() ([]serviceRecord, error) {
-	raw, err := lockedfile.Read(store.path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []serviceRecord{}, nil
-		}
-		return nil, fmt.Errorf("reading service store: %w", err)
-	}
-
-	return decodeServiceRecords(raw)
-}
-
-func decodeServiceRecords(raw []byte) ([]serviceRecord, error) {
-	if len(strings.TrimSpace(string(raw))) == 0 {
-		return []serviceRecord{}, nil
-	}
-
 	records := []serviceRecord{}
-	if err := json.Unmarshal(raw, &records); err != nil {
-		return nil, fmt.Errorf("parsing service store: %w", err)
+	err := store.backend.View(func(txn *badger.Txn) error {
+		iterator := txn.NewIterator(badger.IteratorOptions{
+			PrefetchValues: true,
+			PrefetchSize:   20,
+		})
+		defer iterator.Close()
+
+		prefix := []byte("service/")
+		for iterator.Seek(prefix); iterator.ValidForPrefix(prefix); iterator.Next() {
+			item := iterator.Item()
+			raw, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+
+			record := serviceRecord{}
+			if err := json.Unmarshal(raw, &record); err != nil {
+				return err
+			}
+			records = append(records, record)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("reading service store: %w", err)
 	}
 
 	sort.SliceStable(records, func(i, j int) bool {
 		return records[i].Name < records[j].Name
 	})
-
 	return records, nil
 }
 
-func encodeServiceRecords(records []serviceRecord) ([]byte, error) {
-	raw, err := json.MarshalIndent(records, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("serializing service store: %w", err)
-	}
-	return raw, nil
-}
-
-func (store *serviceStore) transform(fn func([]serviceRecord) ([]serviceRecord, error)) error {
-	if err := os.MkdirAll(filepath.Dir(store.path), 0o755); err != nil {
-		return fmt.Errorf("creating service store directory: %w", err)
-	}
-
-	return lockedfile.Transform(store.path, func(raw []byte) ([]byte, error) {
-		records, err := decodeServiceRecords(raw)
-		if err != nil {
-			return nil, err
-		}
-
-		updated, err := fn(records)
-		if err != nil {
-			return nil, err
-		}
-
-		return encodeServiceRecords(updated)
-	})
+func serviceKey(name string) string {
+	return "service/" + strings.TrimSpace(name)
 }
 
 func normalizeStringSlice(values []string) []string {

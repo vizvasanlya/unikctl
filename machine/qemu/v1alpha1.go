@@ -22,8 +22,6 @@ import (
 	"github.com/acorn-io/baaah/pkg/merr"
 	"github.com/go-viper/mapstructure/v2"
 	goprocess "github.com/shirou/gopsutil/v3/process"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -36,6 +34,7 @@ import (
 	"unikctl.sh/machine/network/macaddr"
 	"unikctl.sh/machine/qemu/qmp"
 	qmpapi "unikctl.sh/machine/qemu/qmp/v7alpha2"
+	"unikctl.sh/machine/resources"
 	"unikctl.sh/unikraft/export/v0/posixenviron"
 	"unikctl.sh/unikraft/export/v0/ukargparse"
 	"unikctl.sh/unikraft/export/v0/uknetdev"
@@ -169,28 +168,13 @@ func (service *machineV1alpha1Service) Create(ctx context.Context, machine *mach
 		machine.Status.LogFile = filepath.Join(machine.Status.StateDir, "vm.log")
 	}
 
-	if machine.Spec.Resources.Requests == nil {
-		machine.Spec.Resources.Requests = make(corev1.ResourceList, 2)
-	}
-
-	if machine.Spec.Resources.Requests.Memory().Value() == 0 {
-		quantity, err := resource.ParseQuantity("64Mi")
-		if err != nil {
-			machine.Status.State = machinev1alpha1.MachineStateFailed
-			return machine, err
-		}
-
-		machine.Spec.Resources.Requests[corev1.ResourceMemory] = quantity
-	}
-
-	if machine.Spec.Resources.Requests.Cpu().Value() == 0 {
-		quantity, err := resource.ParseQuantity("1")
-		if err != nil {
-			machine.Status.State = machinev1alpha1.MachineStateFailed
-			return machine, err
-		}
-
-		machine.Spec.Resources.Requests[corev1.ResourceCPU] = quantity
+	if err := resources.ApplyDefaultsAndValidate(
+		&machine.Spec.Resources,
+		resources.DefaultCPURequest,
+		resources.DefaultMemoryRequest,
+	); err != nil {
+		machine.Status.State = machinev1alpha1.MachineStateFailed
+		return machine, err
 	}
 
 	qopts := []QemuOption{
@@ -790,6 +774,26 @@ func (service *machineV1alpha1Service) Pause(ctx context.Context, machine *machi
 	return machine, nil
 }
 
+// Resume resumes a paused QEMU instance.
+func (service *machineV1alpha1Service) Resume(ctx context.Context, machine *machinev1alpha1.Machine) (*machinev1alpha1.Machine, error) {
+	return service.Start(ctx, machine)
+}
+
+// Snapshot is not currently supported by the QEMU driver in unikctl.
+func (service *machineV1alpha1Service) Snapshot(context.Context, *machinev1alpha1.Machine) (*machinev1alpha1.Machine, error) {
+	return nil, fmt.Errorf("snapshot lifecycle is not supported by qemu driver")
+}
+
+// Restore is not currently supported by the QEMU driver in unikctl.
+func (service *machineV1alpha1Service) Restore(context.Context, *machinev1alpha1.Machine) (*machinev1alpha1.Machine, error) {
+	return nil, fmt.Errorf("restore lifecycle is not supported by qemu driver")
+}
+
+// Inspect refreshes and returns the machine runtime state.
+func (service *machineV1alpha1Service) Inspect(ctx context.Context, machine *machinev1alpha1.Machine) (*machinev1alpha1.Machine, error) {
+	return service.Get(ctx, machine)
+}
+
 // Logs implements unikctl.sh/api/machine/v1alpha1.MachineService
 func (service *machineV1alpha1Service) Logs(ctx context.Context, machine *machinev1alpha1.Machine) (chan string, chan error, error) {
 	out, errOut, err := logtail.NewLogTail(ctx, machine.Status.LogFile)
@@ -837,18 +841,25 @@ func (service *machineV1alpha1Service) Get(ctx context.Context, machine *machine
 		return machine, fmt.Errorf("cannot read QEMU platform configuration from machine status")
 	}
 
-	// Set the cpu and memory resources
-	// TODO(craciunouc): This is a temporary solution until we have proper
-	// un/marshalling of the resources (and all structures).
-	machine.Spec.Resources.Requests[corev1.ResourceCPU] = resource.MustParse("1")
-
-	// Backwards compatibility with older runs
-	memory := "0Mi"
-	if qcfg.Memory.String() != "" {
-		memory = strings.SplitN(qcfg.Memory.String(), "=", 2)[1]
+	cpuText := ""
+	if qcfg.SMP.CPUs > 0 {
+		cpuText = strconv.FormatUint(qcfg.SMP.CPUs, 10)
 	}
 
-	machine.Spec.Resources.Requests[corev1.ResourceMemory] = resource.MustParse(memory)
+	memoryText := ""
+	if qcfg.Memory.Size > 0 {
+		switch qcfg.Memory.Unit {
+		case QemuMemoryUnitGB:
+			memoryText = fmt.Sprintf("%dGi", qcfg.Memory.Size)
+		default:
+			memoryText = fmt.Sprintf("%dMi", qcfg.Memory.Size)
+		}
+	}
+
+	// Backfill missing requests without mutating explicit user-provided values.
+	if err := resources.BackfillMissingFromPlatform(&machine.Spec.Resources, cpuText, memoryText); err != nil {
+		return machine, err
+	}
 
 	// Check if the process is alive, which ultimately indicates to us whether we
 	// able to speak to the exposed QMP socket

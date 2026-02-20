@@ -31,9 +31,11 @@ import (
 	"unikctl.sh/iostreams"
 	"unikctl.sh/log"
 
+	"unikctl.sh/internal/cli/unikctl/bench"
 	"unikctl.sh/internal/cli/unikctl/build"
 	"unikctl.sh/internal/cli/unikctl/controlplane"
 	"unikctl.sh/internal/cli/unikctl/doctor"
+	"unikctl.sh/internal/cli/unikctl/inspect"
 	"unikctl.sh/internal/cli/unikctl/logs"
 	"unikctl.sh/internal/cli/unikctl/migrate"
 	"unikctl.sh/internal/cli/unikctl/node"
@@ -41,6 +43,7 @@ import (
 	"unikctl.sh/internal/cli/unikctl/ps"
 	"unikctl.sh/internal/cli/unikctl/remove"
 	"unikctl.sh/internal/cli/unikctl/run"
+	"unikctl.sh/internal/cli/unikctl/substrate"
 
 	// Additional initializers
 	_ "unikctl.sh/manifest"
@@ -141,6 +144,27 @@ func NewCmd() *cobra.Command {
 	nodeCmd.Long = "Manage scheduler nodes (list/cordon/uncordon/drain)."
 	hideAllFlagsExcept(nodeCmd)
 
+	inspectCmd := inspect.NewCmd()
+	inspectCmd.Use = "inspect APP"
+	inspectCmd.Aliases = nil
+	inspectCmd.Short = "Inspect one deployment in detail"
+	inspectCmd.Long = "Inspect one deployment and show runtime driver, resource allocation, and snapshot state."
+	hideAllFlagsExcept(inspectCmd)
+
+	benchCmd := bench.NewCmd()
+	benchCmd.Use = "bench"
+	benchCmd.Aliases = nil
+	benchCmd.Short = "Benchmark helpers for boot and density"
+	benchCmd.Long = "Benchmark helpers for density planning and boot lifecycle metrics."
+	hideAllFlagsExcept(benchCmd)
+
+	substrateCmd := substrate.NewCmd()
+	substrateCmd.Use = "substrate"
+	substrateCmd.Aliases = nil
+	substrateCmd.Short = "Inspect substrate-level runtime state"
+	substrateCmd.Long = "Inspect driver defaults, snapshot fast-path, warm pool, density, and per-tenant utilization."
+	hideAllFlagsExcept(substrateCmd)
+
 	controlPlaneCmd := controlplane.NewCmd()
 	controlPlaneCmd.Hidden = true
 
@@ -155,6 +179,9 @@ func NewCmd() *cobra.Command {
 	cmd.AddCommand(doctorCmd)
 	cmd.AddCommand(migrateCmd)
 	cmd.AddCommand(nodeCmd)
+	cmd.AddCommand(inspectCmd)
+	cmd.AddCommand(benchCmd)
+	cmd.AddCommand(substrateCmd)
 	cmd.AddCommand(controlPlaneCmd)
 	cmd.AddCommand(nodeAgentCmd)
 

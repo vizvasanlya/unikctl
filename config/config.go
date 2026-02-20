@@ -62,10 +62,14 @@ type KraftKit struct {
 		Token            string `yaml:"token,omitempty" env:"UNIKCTL_CONTROL_PLANE_TOKEN" noattribute:"true"`
 		RBACTokens       string `yaml:"rbac_tokens,omitempty" env:"UNIKCTL_CONTROL_PLANE_RBAC_TOKENS" noattribute:"true"`
 		JWTSecret        string `yaml:"jwt_hs256_secret,omitempty" env:"UNIKCTL_CONTROL_PLANE_JWT_HS256_SECRET" noattribute:"true"`
+		JWTIssuer        string `yaml:"jwt_issuer,omitempty" env:"UNIKCTL_CONTROL_PLANE_JWT_ISSUER" noattribute:"true"`
+		JWTAudience      string `yaml:"jwt_audience,omitempty" env:"UNIKCTL_CONTROL_PLANE_JWT_AUDIENCE" noattribute:"true"`
 		TLSCertFile      string `yaml:"tls_cert_file,omitempty" env:"UNIKCTL_CONTROL_PLANE_TLS_CERT_FILE" noattribute:"true"`
 		TLSKeyFile       string `yaml:"tls_key_file,omitempty" env:"UNIKCTL_CONTROL_PLANE_TLS_KEY_FILE" noattribute:"true"`
 		TLSCAFile        string `yaml:"tls_ca_file,omitempty" env:"UNIKCTL_CONTROL_PLANE_TLS_CA_FILE" noattribute:"true"`
 		TLSInsecure      bool   `yaml:"tls_insecure_skip_verify,omitempty" env:"UNIKCTL_CONTROL_PLANE_TLS_INSECURE_SKIP_VERIFY" noattribute:"true" default:"false"`
+		AllowInsecure    bool   `yaml:"allow_insecure_http,omitempty" env:"UNIKCTL_CONTROL_PLANE_ALLOW_INSECURE_HTTP" noattribute:"true" default:"false"`
+		AllowUnauth      bool   `yaml:"allow_unauthenticated,omitempty" env:"UNIKCTL_CONTROL_PLANE_ALLOW_UNAUTHENTICATED" noattribute:"true" default:"false"`
 	} `yaml:"control_plane,omitempty"`
 }
 

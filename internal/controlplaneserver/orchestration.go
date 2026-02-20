@@ -17,6 +17,7 @@ import (
 	"unikctl.sh/internal/cli/unikctl/run"
 	"unikctl.sh/internal/controlplaneapi"
 	"unikctl.sh/internal/operations"
+	"unikctl.sh/log"
 )
 
 const (
@@ -28,6 +29,11 @@ const (
 func (server *Server) deploySingle(ctx context.Context, request *controlplaneapi.DeployRequest, machineName string, exclude map[string]struct{}) (string, error) {
 	targetRequest := *request
 	targetRequest.Name = strings.TrimSpace(machineName)
+	targetRequest.Tenant = normalizeTenant(targetRequest.Tenant)
+
+	if err := server.enforceTenantQuota(&targetRequest); err != nil {
+		return "", err
+	}
 
 	selectedNode, err := server.selectNodeForDeploy(&targetRequest, exclude)
 	if err != nil {
@@ -44,9 +50,41 @@ func (server *Server) deploySingle(ctx context.Context, request *controlplaneapi
 		return selectedNode.Name, nil
 	}
 
+	if server.nodes != nil {
+		nodes, listErr := server.nodes.List()
+		if listErr != nil {
+			return "", listErr
+		}
+		if len(nodes) > 0 {
+			return "", newAdmissionError(
+				"admission_rejected_no_eligible_node",
+				formatCapacityRequirement(requestedMemoryBytes(&targetRequest), requestedCPUMilli(&targetRequest)),
+			)
+		}
+	}
+
 	execCtx := controlplaneapi.WithServerMode(ctx)
+	if warmMachine, resumed, err := server.tryWarmRestoreOrResume(execCtx, &targetRequest, targetRequest.Name); err != nil {
+		log.G(ctx).WithError(err).WithField("machine", targetRequest.Name).Debug("warm resume attempt failed; falling back to cold boot")
+	} else if resumed {
+		if strings.TrimSpace(warmMachine) != "" && strings.TrimSpace(warmMachine) != strings.TrimSpace(targetRequest.Name) {
+			log.G(ctx).WithFields(map[string]interface{}{
+				"requested": targetRequest.Name,
+				"selected":  warmMachine,
+			}).Info("warm pool selected compatible runtime snapshot from a different machine")
+		}
+		if strings.TrimSpace(warmMachine) != "" {
+			targetRequest.Name = strings.TrimSpace(warmMachine)
+		}
+		if err := server.workloads.Upsert(targetRequest.Name, hostname(), targetRequest); err != nil {
+			return "", err
+		}
+		return hostname(), nil
+	}
+
 	runOptions := &run.RunOptions{
 		Detach:       true,
+		CPU:          firstNonEmpty(targetRequest.CPU, "1"),
 		Debug:        targetRequest.Debug,
 		Memory:       firstNonEmpty(targetRequest.Memory, "64Mi"),
 		Name:         targetRequest.Name,
