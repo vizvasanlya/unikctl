@@ -30,7 +30,7 @@ jobs:
           "$(go env GOPATH)/bin/ytt" -f .goreleaser-staging.yaml > goreleaser-staging.yaml
 
       - name: Build snapshot
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: "~> v2"

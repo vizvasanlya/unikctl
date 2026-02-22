@@ -28,7 +28,7 @@ jobs:
           "$(go env GOPATH)/bin/ytt" -f .goreleaser-stable.yaml > goreleaser-stable.yaml
 
       - name: Release
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: "~> v2"
