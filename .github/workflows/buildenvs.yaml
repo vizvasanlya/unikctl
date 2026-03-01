@@ -230,14 +230,14 @@ jobs:
 
       - name: Download 'ghcr.io/vizvasanlya/unikctl/qemu' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: qemu-oci-image
           path: /tmp
 
       - name: Download 'ghcr.io/vizvasanlya/unikctl/xen' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: xen-oci-image
           path: /tmp
@@ -333,21 +333,21 @@ jobs:
 
       - name: Download 'ghcr.io/vizvasanlya/unikctl/myself' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: myself-oci-image
           path: /tmp
 
       - name: Download 'ghcr.io/vizvasanlya/unikctl/qemu' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: qemu-oci-image
           path: /tmp
 
       - name: Download 'ghcr.io/vizvasanlya/unikctl/xen' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: xen-oci-image
           path: /tmp
@@ -431,21 +431,21 @@ jobs:
 
       - name: Download 'ghcr.io/vizvasanlya/unikctl/myself' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: myself-oci-image
           path: /tmp
 
       - name: Download 'ghcr.io/vizvasanlya/unikctl/qemu' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: qemu-oci-image
           path: /tmp
 
       - name: Download 'ghcr.io/vizvasanlya/unikctl/xen' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: base-oci-image
           path: /tmp
@@ -538,14 +538,14 @@ jobs:
 
       - name: Download 'ghcr.io/vizvasanlya/unikctl/myself' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: myself-oci-image
           path: /tmp
 
       - name: Download 'ghcr.io/vizvasanlya/unikctl/qemu' artifacts
         if: ${{ steps.check-run.outputs.run == 'true' }}
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: qemu-oci-image
           path: /tmp
